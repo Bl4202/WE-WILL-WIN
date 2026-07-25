@@ -1,0 +1,26 @@
+{
+  "city": "houston",
+  "version": "v1",
+  "generatedAt": "2026-07-20T04:33:05.220Z",
+  "origin": {
+    "lat": 29.78826,
+    "lng": -95.44108
+  },
+  "sources": [
+    {
+      "name": "METRO Houston GTFS",
+      "license": "METRO developer terms",
+      "attribution": "Transit data © Metropolitan Transit Authority of Harris County"
+    },
+    {
+      "name": "US Census LEHD LODES8 RAC/WAC (Texas) + 2023 Gazetteer",
+      "attribution": "US Census Bureau, LEHD",
+      "note": "population = RAC employed residents × 2.15 (proxy; see bake_report)"
+    },
+    {
+      "name": "Basemap tiles",
+      "license": "ODbL",
+      "attribution": "© OpenStreetMap contributors, © OpenFreeMap"
+    }
+  ]
+}

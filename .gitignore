@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.cache/
+
+# env / secrets
+.env
+.env.*
+
+# editor / OS
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json

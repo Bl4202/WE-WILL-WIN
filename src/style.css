@@ -1,0 +1,454 @@
+:root {
+  --bg: #000;
+
+  /* Sidebar is opaque; floating boxes let the map read through. */
+  --sidebar-bg: #000;
+  --box-bg: rgba(0, 0, 0, 0.66);
+
+  --line: rgba(255, 255, 255, 0.22);
+  --line-soft: rgba(255, 255, 255, 0.12);
+  --text: #fff;
+  --text-dim: rgba(255, 255, 255, 0.55);
+
+  /* Restored from the white-card version, unchanged — same hex values. */
+  --accent-boardings: #b23a72;
+  --accent-waiting: #3b6fa0;
+  --accent-completed: #3f8f5f;
+  --accent-unserved: #c2703a;
+
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+
+  --sidebar-w: 230px;
+
+  font-family: "Segoe UI", system-ui, sans-serif;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+}
+
+#app {
+  position: relative;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* ── Map: full-bleed background ───────────────── */
+#map {
+  position: absolute;
+  inset: 0;
+}
+
+#loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  color: var(--text-dim);
+  background: var(--bg);
+  z-index: 5;
+  pointer-events: none;
+  transition: opacity 0.4s;
+}
+
+#loading.done {
+  opacity: 0;
+}
+
+/* ── Sidebar ──────────────────────────────────── */
+#sidebar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: var(--sidebar-w);
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--line);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  transition: width 0.2s ease;
+}
+
+#sidebar.collapsed {
+  width: 44px;
+}
+
+#sidebar-toggle {
+  flex: none;
+  height: 44px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--text-dim);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    transform 0.2s ease,
+    color 0.15s ease;
+}
+
+#sidebar-toggle:hover {
+  color: var(--text);
+}
+
+#sidebar.collapsed #sidebar-toggle {
+  transform: rotate(180deg);
+}
+
+.sidebar-inner {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 22px 16px 16px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+#sidebar.collapsed .sidebar-inner {
+  display: none;
+}
+
+.side-block {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.block-title {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+#clock {
+  font-size: 17px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+#time-controls {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+#mode-rail {
+  display: flex;
+  gap: 6px;
+}
+
+#layer-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ── Instructions (pinned to the sidebar foot) ── */
+#instructions dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 10px;
+  align-items: baseline;
+}
+
+#instructions dd {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+
+kbd {
+  display: inline-block;
+  border: 1px solid var(--line);
+  padding: 1px 5px;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* Logo fills whatever space the controls leave. */
+#sidebar-logo {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-top: 8px;
+}
+
+#sidebar-logo img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  opacity: 0.9;
+}
+
+/* ── Floating boxes ───────────────────────────── */
+.float-card {
+  position: absolute;
+  background: var(--box-bg);
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 14px 16px;
+  z-index: 10;
+  backdrop-filter: blur(2px);
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* Collapse animates height via grid-template-rows 1fr→0fr, which (unlike
+   max-height) needs no magic number and eases correctly for any content. */
+.float-card .card-body {
+  display: grid;
+  grid-template-rows: 1fr;
+  margin-top: 12px;
+  transition:
+    grid-template-rows 0.32s var(--ease),
+    margin-top 0.32s var(--ease);
+}
+
+.float-card.collapsed .card-body {
+  grid-template-rows: 0fr;
+  margin-top: 0;
+}
+
+.card-body-inner {
+  min-height: 0;
+  overflow: hidden;
+  transition:
+    opacity 0.26s var(--ease) 0.06s,
+    transform 0.32s var(--ease);
+}
+
+/* Content fades out fast on collapse, then eases back in behind the
+   expanding height — the stagger is what makes it feel deliberate. */
+.float-card.collapsed .card-body-inner {
+  opacity: 0;
+  transform: translateY(-6px);
+  transition:
+    opacity 0.14s var(--ease),
+    transform 0.32s var(--ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .float-card .card-body,
+  .card-body-inner,
+  #sidebar,
+  #sidebar-toggle {
+    transition: none;
+  }
+}
+
+.fold-btn {
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    transform 0.15s ease,
+    color 0.15s ease;
+}
+
+.fold-btn:hover {
+  color: var(--text);
+}
+
+.float-card.collapsed .fold-btn {
+  transform: rotate(-90deg);
+}
+
+/* ── Placement ─────────────────────────────────── */
+#right-stack {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 10;
+}
+
+#right-stack .float-card {
+  position: static;
+  width: 100%;
+}
+
+/* ── Buttons (monochrome; active inverts) ─────── */
+#time-controls button,
+.bar-btn,
+.mode-btn {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+#time-controls button {
+  padding: 6px 0;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.bar-btn {
+  padding: 7px 10px;
+  font-size: 12px;
+  text-align: left;
+}
+
+.mode-btn {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mode-btn svg {
+  display: block;
+}
+
+#time-controls button:hover,
+.bar-btn:hover,
+.mode-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+#time-controls button.active,
+.bar-btn.active,
+.mode-btn.active {
+  background: #fff;
+  color: #000;
+  border-color: #fff;
+}
+
+/* ── Stats card ────────────────────────────────── */
+.headline-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stat-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+#kpi-boardings strong {
+  font-size: 25px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--accent-boardings);
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-sub {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px 16px;
+}
+
+.stat-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stat-value {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.accent-waiting {
+  color: var(--accent-waiting);
+}
+
+.accent-completed {
+  color: var(--accent-completed);
+}
+
+.accent-unserved {
+  color: var(--accent-unserved);
+}
+
+/* ── Focus panel (GDD §5.4, minimal) ──────────── */
+#focus-panel {
+  pointer-events: none;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+#focus-panel h3 {
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  color: var(--text);
+}
+
+#focus-panel .row {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 0;
+}
+
+#focus-panel .row span:first-child {
+  color: var(--text-dim);
+}
+
+#focus-panel .row span:last-child {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}

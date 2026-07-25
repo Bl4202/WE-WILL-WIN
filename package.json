@@ -1,0 +1,28 @@
+{
+  "name": "metro",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Metro — transit simulation. Phase 1: real-city data spike, Houston (see Transit_Authority_GDD.md §8)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "bake": "tsx scripts/bake.mts"
+  },
+  "dependencies": {
+    "@deck.gl/core": "^9.1.0",
+    "@deck.gl/geo-layers": "^9.1.0",
+    "@deck.gl/layers": "^9.1.0",
+    "@deck.gl/mapbox": "^9.1.0",
+    "h3-js": "^4.1.0",
+    "maplibre-gl": "^5.6.0"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.5",
+    "adm-zip": "^0.5.16",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0",
+    "vite": "^5.4.0"
+  }
+}

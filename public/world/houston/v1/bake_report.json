@@ -1,0 +1,39 @@
+{
+  "generatedAt": "2026-07-20T04:33:05.220Z",
+  "stages": {
+    "gtfs": {
+      "routes": 115,
+      "trips": 21878,
+      "stops": 8793,
+      "shapePoints": 229813,
+      "badShapeRows": 0,
+      "tripsMissingShape": 0,
+      "routesWithoutShape": 6,
+      "railRoutes": 3
+    },
+    "census": {
+      "populationSource": "LODES RAC × persons-per-worker (ACS requires API key)",
+      "personsPerWorker": 2.15,
+      "racBlockRows": 430986,
+      "blocksInRegion": 59652,
+      "tracts": 1559,
+      "centroidsMatched": 1559,
+      "unmatched": 0
+    },
+    "lodes": {
+      "blockRows": 165213,
+      "blocksInRegion": 30104,
+      "tractsWithJobs": 1559
+    },
+    "demandGrid": {
+      "h3Res": 8,
+      "zones": 1494,
+      "totalPop": 6495795,
+      "totalJobs": 3127918,
+      "jobsTractsOutsideAcs": 1
+    }
+  },
+  "warnings": [
+    "population is a LODES-RAC-derived proxy; switch to ACS B01003 once a Census API key is configured"
+  ]
+}

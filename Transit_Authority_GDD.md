@@ -1,4 +1,4 @@
-# Game Design Document — *Common Cause: Transit Authority*
+# Game Design Document — *Metro*
 
 **A browser-based, data-driven public transit simulation**
 
@@ -718,16 +718,169 @@ Competition is fair and interesting because **demand is a finite, modeled resour
 
 ---
 
-## 8. Scope & Roadmap (indicative)
+## 8. Progress & Roadmap — from First Prototype to v1.0
 
-| Milestone | Content |
-|---|---|
-| **M1 — Vertical slice** | One baked city; rail-only; demand model + static forecast; Inspect/Build modes; core KPIs. |
-| **M2 — Operations** | Dynamic sim, crowding/bunching, maintenance cycles, operating economy, tactical loop. |
-| **M3 — Multimodal** | Buses on road congestion model, transfer hubs, mode choice across modes. |
-| **M4 — Meta** | Accuracy scoring & institutional progression, grants/bonds, equity mandates, scenarios/leaderboards. |
-| **M5 — Scale & polish** | Large-metro LOD, second city bundles, 3D station inspector, full UI accessibility pass. |
-| **M6 — Multiplayer** | Server-authoritative session sim; async leaderboards + ghosts; co-op shared authority; competitive shared-demand operators. |
+This section is the living development timeline. It maps the entire arc — from the first throwaway prototype to the v1.0 launch — into ten phases, each with concrete deliverables, an **exit gate** (the objective test that must pass before the next phase begins), and the **risks it retires** (cross-referenced to §9). Phases are sequenced so that the highest-uncertainty technical claims are proven earliest, when they are cheapest to fail.
+
+**Status legend:** ✅ complete · 🔄 in progress · ⬜ not started
+**Timeline assumption:** a core team of 3–5 (systems/sim engineer, full-stack/graphics engineer, data engineer, designer, +generalist), ~36 months end-to-end. Durations are working estimates, not commitments.
+
+### Milestone summary
+
+| Milestone | Phases | Content | Target |
+|---|---|---|---|
+| **M0 — Proofs** | 0–2 | Toy prototype; data ingestion spike; WASM kernel + static model | Months 1–6 |
+| **M1 — Vertical slice** | 3 | One baked city; rail-only; demand model + static forecast; Inspect/Build modes; core KPIs | Months 7–9 |
+| **M2 — Operations** | 4 | Dynamic sim, crowding/bunching, maintenance cycles, operating economy, tactical loop | Months 10–13 |
+| **M3 — Multimodal** | 5 | Buses on road congestion model, transfer hubs, mode choice across modes | Months 14–17 |
+| **M4 — Meta** | 6 | Accuracy scoring & institutional progression, grants/bonds, equity mandates, scenarios/leaderboards | Months 18–21 |
+| **M5 — Scale & polish** | 7 | Large-metro LOD, additional city bundles, 3D station inspector, full UI accessibility pass | Months 22–26 |
+| **M6 — Multiplayer** | 8 | Server-authoritative session sim; async leaderboards + ghosts; co-op; competitive operators | Months 27–32 |
+| **v1.0 — Launch** | 9 | Hardening, content, live-ops readiness, launch | Months 33–36 |
+
+### Phase 0 — Throwaway Prototype: "Dots on Lines" (Weeks 1–6) 🔄
+
+The cheapest possible test of the core fantasy: is *watching a transit network you designed come alive* fun, before any real data or real tech is involved?
+
+- ✅ Game concept, design pillars, and this GDD (v0.9) drafted.
+- ✅ Pure-TypeScript toy: a hardcoded fictional grid city (~50 zones), canvas 2D rendering. *(Vite + strict TS; 7×7 demand grid with jobs-heavy core and pop-heavy ring; deterministic fixed-timestep 4 Hz kernel with seeded PRNG — the §4.3/§6.3 determinism discipline kept from day one.)*
+- ✅ Click-to-draw lines and stations; vehicles as dots moving on schedules; passengers as counts that spawn, wait, board, alight via naive shortest-path. *(Snap-to-station drawing creates transfer stations; Dijkstra over (station, line) states with headway wait + transfer penalty; crush-capacity boarding with left-behinds; AM/PM directional demand with hourly profile.)*
+- ✅ One KPI readout (daily boardings) and a pause/speed control. *(Glance strip: clock, pause/0.5×/1×/4×/~1 day-min controls, daily boardings + waiting/completed/unserved minor stats; minimal station/line Focus panel.)*
+- ⬜ Playtest with 5–10 people: do they lean in and draw a second line without being told to?
+
+**Deliberately excluded:** real data, Rust/WASM, deck.gl, economy, everything else. This code is scaffolding and will be deleted.
+**Exit gate:** playtesters unprompted redesign their network to chase the boardings number — evidence the observe→replan loop has intrinsic pull.
+**Retires:** the unstated biggest risk of all — that the core loop isn't engaging.
+
+### Phase 1 — Data Ingestion Spike: One Real City on Screen (Weeks 7–14) 🔄
+
+Prove the "world baking" pipeline (§1.4) end-to-end on **one mid-size city with excellent open data**. **City selected: Houston** (METRO GTFS feed mdb-2060; LODES/gazetteer census coverage for Harris, Fort Bend, Montgomery, Brazoria, Galveston; no existing heavy-rail metro, so the player builds from a clean slate).
+
+- 🔄 OSM extract → street/rail graph; GTFS parse → reference network; census join → H3 demand grid. *(GTFS ✅ — 115 routes / 21,878 trips / 8,793 stops / 229,813 shape points parsed into the reference network. Census→H3 ✅ — LODES RAC×2.15 population proxy + WAC jobs + gazetteer tract centroids → 1,494 H3-res-8 cells, 6.5M pop / 3.1M jobs; ACS B01003 pending a Census API key (keyless access was retired). OSM street/rail **graph** ⬜ — basemap is rendered OSM vector tiles, not yet an ingested routing graph.)*
+- ⬜ Conflation pass (GTFS stops snapped to OSM network) with a validation report of unmatched/malformed entities.
+- 🔄 PMTiles basemap + deck.gl rendering of the real city: streets, land use, demand heatmap, reference-network ghost overlay. *(deck.gl over MapLibre GL ✅ — dark OSM basemap, H3HexagonLayer demand heatmap (D), METRO reference ghost overlay (G), PathLayer lines / ScatterplotLayer stations & vehicles. Basemap is hosted OpenFreeMap tiles for now; self-hosted PMTiles ⬜.)*
+- 🔄 First **Baked World Bundle** artifact (versioned, CDN-servable) and the bake CLI that produces it. *(`npm run bake` → `public/world/houston/v1/{demand,gtfs_baseline,meta,bake_report}.json`, versioned + cached + provenance/attribution per §6.2; JSON stands in for PMTiles/Parquet formats.)*
+- 🔄 Ingestion validation/repair stage for malformed feeds (schema checks, orphan trips, broken shapes). *(bake_report.json counts bad shape rows, trips missing shapes, routes without shapes, unmatched tracts; repairs: shape resequencing, bad-coordinate drops, multi-URL source fallback. Full schema-check stage ⬜.)*
+
+**Exit gate:** a stranger can open a URL, see their recognizable real city with a demand heatmap, in < 8 s load on broadband.
+**Retires:** §9-4 (GTFS/OSM quality variance — proven on real messy data, with the repair stage in place).
+
+### Phase 2 — Simulation Kernel & Static Model (Months 4–6) ⬜
+
+The deepest technical bet: the Rust→WASM deterministic kernel (§1.2) and the four-step static model (§4.1), calibrated against the Phase-1 city.
+
+- ⬜ Rust kernel skeleton: fixed-timestep tick, seeded PRNG, SharedArrayBuffer bridge to deck.gl; determinism test harness in CI (replay N ticks twice → identical state hash), including WASM-vs-native parity.
+- ⬜ Routing backends: Contraction Hierarchies (road), RAPTOR/CSA (transit); skim generation for the full zone set.
+- ⬜ Four-step static pipeline: trip generation → gravity/IPF distribution → nested-logit mode choice → hyperpath transit + Frank–Wolfe road assignment.
+- ⬜ Calibration v1: ODME + coefficient fitting against the reference network's observed boardings; **GEH < 5 on majority of links** (§4.1.6).
+- ⬜ Performance benchmark: static forecast for a player-drawn line in ≤ 300 ms perceived; kernel tick ≤ 30 ms (§6.1) at Phase-1 city scale.
+
+**Exit gate:** the calibration gate passes on the pilot city — the simulated reference network reproduces reality within tolerance — *and* the performance budget holds in-browser.
+**Retires:** §9-2 partially (in-browser performance, at mid-size scale), §9-5 (determinism harness exists from day one), §9-1/§9-6 partially (calibration methodology proven on one data-rich city).
+
+### Phase 3 — M1 Vertical Slice: The Playable Core (Months 7–9) ⬜
+
+Assemble Phases 1–2 into the first real *game*: blank-slate start (§2), rail-only, one city.
+
+- ⬜ Plan/Build mode: alignment drawing (at-grade/elevated/tunnel with cost differentials), station placement with portal positioning and walk-catchment preview.
+- ⬜ Live forecast-with-confidence-bands on every proposal (§2.5); commit → construction time/cost.
+- ⬜ Inspect mode + Glance strip: the four mandate KPIs, budget, clock, time controls.
+- ⬜ Capital account v1 (surplus + simple bonds); no operating detail yet.
+- ⬜ Reference ghost overlay with per-line real performance — the benchmark loop (§2.5) in its first form.
+- ⬜ Internal milestone build: 20+ external playtesters; instrumented sessions.
+
+**Exit gate:** median playtester voluntarily plays ≥ 45 minutes and can articulate *why* their forecast missed (Legible Complexity pillar validated); the honest-uncertainty bands are read correctly.
+**Retires:** §9-3 partially (depth-vs-onboarding, first evidence).
+
+### Phase 4 — M2 Operations: The Living Day (Months 10–13) ⬜
+
+The dynamic regime (§4.3): the simulated day as an observable system.
+
+- ⬜ Full agent tick: passenger flow packets spawn/wait/board/transfer/left-behind; vehicle physics from tractive-effort curves (§3.1); dwell from door throughput.
+- ⬜ Emergent phenomena verified against the model: crowding feedback, dwell inflation, bunching; holding-strategy mitigations.
+- ⬜ Reliability draws from MDBF/OTP priors; incident → delay propagation.
+- ⬜ Maintenance ladder (§3.1) with depot bay capacity; deferral consequences.
+- ⬜ Operating account: energy from traction physics, crew, maintenance accrual, fare revenue v1 (flat fare), farebox recovery KPI; subsidy envelope + downgrade spiral (§2.4).
+- ⬜ Tactical loop UI: per-band headways, consist assignment, Focus panel with live-forecast sliders (§5.4); "▸ why?" traceability v1.
+- ⬜ Forecast-vs-realized delta now computable → Forecast Accuracy metric exists (unscored).
+
+**Exit gate:** a scripted scenario ("your line is over crush load at 8 AM — fix it within budget") is solvable by playtesters using only the telemetry, without designer hints.
+
+### Phase 5 — M3 Multimodal: The Whole Toolbox (Months 14–17) ⬜
+
+- ⬜ Road congestion model: BPR volume-delay, background car traffic at user equilibrium; congestion feedback into skims.
+- ⬜ Surface modes on the congestion-exposure ladder (§3.3): local/express bus, BRT, tram, trolleybus; dedicated-lane and grade-separation investments visibly move OTP distributions.
+- ⬜ Remaining catalogue modes (ferry, monorail/APM, gondola, funicular, DRT, bike-share, park-and-ride) with per-mode rolling-stock parameter sets.
+- ⬜ Transfer hubs with explicit transfer graphs, penalties, timed transfers (§3.2); trunk-and-feeder synergy measurable in the mode-choice terms.
+- ⬜ Mode-fit function UI: cost-per-rider curves per corridor (§3.3).
+- ⬜ Full fare engine: flat/zonal/distance/passes, elasticity feedback (§4.1.7).
+
+**Exit gate:** in playtests, players discoverably learn the overbuild/underbuild lesson (§3.3) from the economics alone — the data teaches mode choice without a tutorial forcing it.
+
+### Phase 6 — M4 Meta-Game: Mastery & Mandate (Months 18–21) ⬜
+
+- ⬜ Forecast Accuracy scoring + institutional progression: credibility → cheaper bonds, grants, unlocked analytics (§2.5, §3.4).
+- ⬜ Full finance: bond market with credit rating, grant programs tied to coverage/ridership/equity mandates.
+- ⬜ Equity overlays and mandate tracking (§5.5, §6.2); benchmark scoring vs. the reference network as a headline result screen.
+- ⬜ Scenario framework: authored challenges with fixed seeds, win conditions, par scores; guided scenarios double as the tutorial ladder (§9-3 mitigation).
+- ⬜ Single-player leaderboards on deterministic scenario results (pre-multiplayer: local verification only).
+- ⬜ **Closed alpha** (hundreds of players, one city): retention, difficulty, and onboarding telemetry.
+
+**Exit gate:** closed-alpha D7 retention and tutorial completion rates meet targets; new players reach their first committed line within 20 minutes unaided.
+**Retires:** §9-3 (onboarding, at scale).
+
+### Phase 7 — M5 Scale & Polish (Months 22–26) ⬜
+
+- ⬜ Large-metro stress program: LOD demand aggregation, flow-packet aggregation, viewport culling; performance budget (§6.1) held on a >10k-stop metro.
+- ⬜ City pipeline industrialized: 5–8 launch cities across data-fidelity tiers, with the tiered fidelity labeling (§9-1) surfaced in city selection.
+- ⬜ Three.js station inspector: 3D platform/portal/vertical-circulation editing with live egress preview (§5.6).
+- ⬜ Full accessibility pass (§5.7): keyboard nav, command palette, colorblind-safe validation, panel persistence.
+- ⬜ Save/load hardening, bundle versioning/migration policy, credits & data-provenance panel (§6.2).
+- ⬜ **Open beta** (single-player) on the launch city set.
+
+**Exit gate:** performance budget green on the largest launch city on mid-range hardware; open-beta crash-free session rate ≥ 99.5%.
+**Retires:** §9-2 (mega-city performance, fully).
+
+### Phase 8 — M6 Multiplayer (Months 27–32) ⬜
+
+Sequenced by netcode risk, cheapest first (§7):
+
+- ⬜ **8a — Async (months 27–28):** server-side native kernel; submission re-simulation + state-hash verification; leaderboards and ghost overlays. First hard test of cross-platform determinism in production (§9-5).
+- ⬜ **8b — Co-op (months 29–30):** session server, command protocol, role permissions, audit log, consensus time control, reconnect/persistence.
+- ⬜ **8c — Competitive (months 31–32):** shared-demand assignment across operators, revenue apportionment, access charges, franchise/tender scaffolding; balance passes on frequency-war and undercutting dynamics (§7.4).
+- ⬜ Lobby/matchmaking, session pooling, hibernation, interest-managed state streaming; load test at target concurrency.
+
+**Exit gate:** a week-long persistent co-op city and a competitive season complete without a determinism divergence or verified-score dispute.
+**Retires:** §9-5 (fully, in production).
+
+### Phase 9 — v1.0 Launch (Months 33–36) ⬜
+
+- ⬜ Content complete: launch city set finalized and calibrated; scenario catalogue; localization of UI text.
+- ⬜ Live-ops readiness: telemetry dashboards, feed-refresh pipeline producing new world versions (§1.4), moderation/reporting for multiplayer, status page.
+- ⬜ Balance freeze → release-candidate discipline: only gate-blocking fixes.
+- ⬜ Marketing beats aligned to the shareable loop ("I out-designed my city") — press/creator builds with capture-friendly overlays.
+- ⬜ **v1.0 ship.** Post-launch backlog seeded: additional cities on cadence, seasonal scenario challenges, modding/city-request pipeline.
+
+**Exit gate (definition of 1.0):** all §6.1 budgets green on all launch cities · calibration gate passed per launch city (or fidelity-labeled) · all three multiplayer modes stable · zero known determinism breaks · onboarding metrics at Phase-6 targets or better.
+
+### Timeline at a glance
+
+```
+Months   1   3   6   9   12  15  18  21  24  27  30  33  36
+         ├───┼───┼───┼───┼───┼───┼───┼───┼───┼───┼───┼───┤
+P0 Toy   ██
+P1 Data    ████
+P2 Kernel      ████
+P3 Slice           ████            ← M1: first playable
+P4 Ops                 █████       ← M2
+P5 Modes                    █████  ← M3
+P6 Meta                         █████          ← M4 · closed alpha
+P7 Scale                             ██████    ← M5 · open beta
+P8 MP                                     ███████  ← M6
+P9 Launch                                        ████ ← v1.0
+```
+
+**Standing risk discipline:** every phase's exit gate is objective and pre-registered here; a failed gate triggers a scope decision (cut, descope, or extend) *before* downstream phases begin, never a silent slip. The two long-pole risks — in-browser performance (§9-2) and cross-platform determinism (§9-5) — both have their harnesses built in Phase 2, twenty-plus months before they could hurt at scale.
 
 ---
 
