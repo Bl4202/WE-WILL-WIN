@@ -1,10 +1,10 @@
 {
   "city": "houston",
   "version": "v1",
-  "generatedAt": "2026-07-20T04:33:05.220Z",
+  "generatedAt": "2026-08-01T21:32:21.480Z",
   "origin": {
-    "lat": 29.78826,
-    "lng": -95.44108
+    "lat": 29.78836,
+    "lng": -95.44107
   },
   "sources": [
     {
@@ -13,14 +13,25 @@
       "attribution": "Transit data © Metropolitan Transit Authority of Harris County"
     },
     {
-      "name": "US Census LEHD LODES8 RAC/WAC (Texas) + 2023 Gazetteer",
+      "name": "US Census LEHD LODES8 RAC/WAC (Texas)",
       "attribution": "US Census Bureau, LEHD",
       "note": "population = RAC employed residents × 2.15 (proxy; see bake_report)"
+    },
+    {
+      "name": "US Census TIGERweb Generalized_TAB2020 census tracts",
+      "attribution": "US Census Bureau, TIGER/Line",
+      "note": "2020 tabulation vintage, generalised to 1:500,000"
     },
     {
       "name": "Basemap tiles",
       "license": "ODbL",
       "attribution": "© OpenStreetMap contributors, © OpenFreeMap"
+    },
+    {
+      "name": "OpenStreetMap via Overpass API (street/rail routing graph)",
+      "license": "ODbL 1.0",
+      "attribution": "© OpenStreetMap contributors",
+      "note": "street_graph.json; see bake_report for extent and coverage"
     }
   ]
 }

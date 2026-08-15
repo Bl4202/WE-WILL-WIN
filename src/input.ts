@@ -16,27 +16,50 @@ export function bindInput(
   const map = renderer.map;
 
   map.on("mousemove", (e) => {
-    const snapped = renderer.pickStation(getSnapshot(), e.point);
-    renderer.hoverLngLat = snapped
-      ? renderer.toLngLat(snapped.pos)
+    if (game.mode === "build") {
+      const target = renderer.pickBuildTarget(getSnapshot(), game.draft, e.point, [
+        e.lngLat.lng,
+        e.lngLat.lat,
+      ]);
+      renderer.hoverLngLat = renderer.toLngLat(target.pos);
+      renderer.hoverSnapped = target.snapped;
+      // Only a committed station carries a waiting queue; a draft point has
+      // no id yet, so there is nothing to report for it.
+      renderer.hoveredStationId = target.existingStationId ?? null;
+      map.getCanvas().style.cursor = "crosshair";
+      return;
+    }
+    const station = renderer.pickStation(getSnapshot(), e.point);
+    renderer.hoverLngLat = station
+      ? renderer.toLngLat(station.pos)
       : [e.lngLat.lng, e.lngLat.lat];
-    map.getCanvas().style.cursor =
-      game.mode === "build" ? "crosshair" : snapped ? "pointer" : "";
+    renderer.hoverSnapped = false;
+    renderer.hoveredStationId = station?.id ?? null;
+    map.getCanvas().style.cursor = station ? "pointer" : "";
+  });
+
+  // Leaving the canvas fires no mousemove, so the last hover would stick.
+  map.on("mouseout", () => {
+    renderer.hoveredStationId = null;
+    renderer.hoverSnapped = false;
   });
 
   map.on("click", (e) => {
     const snap = getSnapshot();
-    const station = renderer.pickStation(snap, e.point);
 
     if (game.mode === "build") {
-      game.addDraftPoint(
-        station
-          ? { pos: station.pos, existingStationId: station.id }
-          : { pos: renderer.toWorld(e.lngLat.lat, e.lngLat.lng) },
-      );
+      const target = renderer.pickBuildTarget(snap, game.draft, e.point, [
+        e.lngLat.lng,
+        e.lngLat.lat,
+      ]);
+      game.addDraftPoint({
+        pos: target.pos,
+        existingStationId: target.existingStationId,
+      });
       return;
     }
 
+    const station = renderer.pickStation(snap, e.point);
     if (station) {
       game.selection = { kind: "station", id: station.id };
       return;

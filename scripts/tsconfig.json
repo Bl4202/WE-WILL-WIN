@@ -1,0 +1,18 @@
+{
+  "//": "The bake CLIs run under tsx in Node, not Vite in a browser, so they need their own compiler settings — the root tsconfig only covers src/ and targets the DOM.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": ["**/*.mts"]
+}

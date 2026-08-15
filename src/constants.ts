@@ -6,7 +6,7 @@ export const SIM_DT = 0.25;
 /**
  * Sim-seconds advanced per real second at 1× speed. 1 means 1× is wall-clock
  * real time: trains cross the map at the speed real trains would. The faster
- * multipliers below compress the day (GDD §2.3).
+ * multipliers below compress the day (GDD §2.3).1
  */
 export const BASE_TIME_SCALE = 1;
 
@@ -41,6 +41,13 @@ export const TRAIN_CAPACITY = 200;
 /** Default scheduled headway for new lines, seconds (5 min). */
 export const DEFAULT_HEADWAY_SEC = 300;
 
+/**
+ * Two line points closer together than this are the same station, metres.
+ * Build-mode snapping produces exactly-coincident points, so this only needs
+ * to absorb float noise — keep it far below any real station spacing.
+ */
+export const SAME_STATION_M = 5;
+
 /** Max walk distance from a zone centre to a station, metres. */
 export const WALK_RADIUS = 1800;
 
@@ -62,3 +69,16 @@ export const DAILY_TRIPS = 40000;
 
 /** Distance-deterrence scale for destination choice, metres (§4.1.3 flavour). */
 export const DEST_DETERRENCE_M = 10000;
+
+/**
+ * TEMPORARY demand-bootstrap hack, Phase 0 only. Fraction of spawnTrip()
+ * calls that draw BOTH origin and destination from zones already near the
+ * player's built stations, instead of the full metro-wide gravity pool — a
+ * deliberately unrealistic floor of "local, along-my-line" ridership so a
+ * brand-new, geographically tiny network doesn't read as dead against tens
+ * of thousands of metro-wide unservedTrips. Remove this constant and its
+ * Simulation-side branch once the real calibrated four-step gravity/IPF/
+ * mode-choice/RAPTOR model (GDD "Phase 2 — Simulation Kernel & Static
+ * Model") replaces this Phase-0 toy demand.
+ */
+export const LOCAL_DEMAND_FRACTION = 0.1;

@@ -4,7 +4,12 @@
  * store/kernel split (GDD §1.1): the sim only advances via tick(), commands
  * are applied between ticks, and everything else reads snapshots.
  */
-import { BASE_TIME_SCALE, SIM_DT, SPEED_MULTIPLIERS } from "./constants";
+import {
+  BASE_TIME_SCALE,
+  SAME_STATION_M,
+  SIM_DT,
+  SPEED_MULTIPLIERS,
+} from "./constants";
 import { Simulation, type LinePoint } from "./simulation";
 import type { SimSnapshot, Zone } from "./types";
 
@@ -92,11 +97,14 @@ export class Game {
   }
 
   addDraftPoint(point: LinePoint): void {
-    // Disallow the same station twice in a row.
+    // Disallow the same stop twice in a row — by position, so it also covers
+    // snapping back onto the draft point just placed (which has no station id
+    // yet) and would otherwise make a zero-length hop.
     const last = this.draft[this.draft.length - 1];
     if (
-      last?.existingStationId !== undefined &&
-      last.existingStationId === point.existingStationId
+      last &&
+      Math.hypot(last.pos.x - point.pos.x, last.pos.y - point.pos.y) <
+        SAME_STATION_M
     ) {
       return;
     }
