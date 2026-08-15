@@ -12,11 +12,11 @@ export interface Vec2 {
   y: number;
 }
 
-/** A demand cell — an H3 hex from the baked world bundle (GDD §1.4). */
+/** A demand cell — a census tract from the baked world bundle (GDD §1.4). */
 export interface Zone {
   id: number;
-  /** H3 cell index (also drives the demand-hex overlay). */
-  h3: string;
+  /** 11-digit census tract GEOID. */
+  geoid: string;
   lat: number;
   lng: number;
   /** Cell centre in local planar metres (see geo.ts). */

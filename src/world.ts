@@ -6,10 +6,24 @@
 import { Projection } from "./geo";
 import type { Zone } from "./types";
 
+/** A polygon ring: [lng, lat] pairs. A part is an outer ring plus any holes. */
+export type Ring = [number, number][];
+
+export interface DemandZone {
+  geoid: string;
+  lat: number;
+  lng: number;
+  pop: number;
+  jobs: number;
+  /** Land area in km² — the density denominator for the demand choropleth. */
+  areaKm2: number;
+  /** Polygon parts; each part is [outerRing, ...holes]. */
+  parts: Ring[][];
+}
+
 export interface DemandFile {
-  h3Res: number;
   origin: { lat: number; lng: number };
-  zones: { h3: string; lat: number; lng: number; pop: number; jobs: number }[];
+  zones: DemandZone[];
 }
 
 export interface BaselineRoute {
@@ -48,7 +62,7 @@ export interface WorldBundle {
 export function zonesFromDemand(demand: DemandFile, proj: Projection): Zone[] {
   return demand.zones.map((z, i) => ({
     id: i,
-    h3: z.h3,
+    geoid: z.geoid,
     lat: z.lat,
     lng: z.lng,
     center: proj.toWorld(z.lat, z.lng),

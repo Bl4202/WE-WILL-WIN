@@ -99,9 +99,10 @@ The pipeline transforms three open-data sources into a single **Baked World Bund
 **Baking stages**
 
 1. **Conflation.** Snap GTFS stop coordinates onto the OSM rail/road network; resolve rail alignment geometry from `shapes.txt`; build a connected multimodal graph (walk edges + transit edges + road edges).
-2. **Demand seeding.** Rasterize the city into a hex grid (H3, resolution ~9, ≈174 m edge). Each cell gets:
+2. **Demand seeding.** Partition the city into **census tracts** (the zone geometry the demand data is already published on). Each zone gets:
    - `pop` (residents), `jobs` (employment), `poi_weight` (attraction mass by category).
    - A **land-use class** (residential / commercial / industrial / mixed / institutional / green).
+   - *(Revised in Phase 1 from an H3 hex grid — see §4.1.1.)*
 3. **Baseline O/D matrix generation.** From GTFS service levels + census, derive a synthetic morning-peak origin–destination matrix using a **doubly-constrained gravity model** (see §4.1). This matrix is the *ground truth of latent demand* the player is trying to serve.
 4. **Calibration against reality.** Where GTFS-RT or published ridership stats exist, scale the gravity model's friction and attraction coefficients until the *baseline* network's simulated boardings match the *real* network's reported boardings (the **accuracy model**, §2.5). Store the calibrated coefficients in the bundle.
 5. **Tiling & export.** Emit PMTiles (geometry), Parquet (demand grid + O/D), and a compact routing graph (CSR adjacency) for the WASM kernel.
@@ -358,7 +359,7 @@ flowchart TB
       GTFSd["GTFS(-RT)<br/>stops · routes · schedules · APC counts"]
       CEN["Census / LODES<br/>population · jobs · income · cars"]
     end
-    ZON["Zones (H3) + network skims<br/>level-of-service matrices"]
+    ZON["Zones (census tracts) + network skims<br/>level-of-service matrices"]
     G1["1 · TRIP GENERATION<br/>productions Pᵢ, attractions Aⱼ"]
     G2["2 · DISTRIBUTION<br/>gravity model + IPF → O/D matrix"]
     G3["3 · MODE CHOICE<br/>nested logit + value-of-time"]
@@ -376,9 +377,13 @@ The pipeline runs in **two regimes** off the *same* calibrated coefficients: a f
 
 #### 4.1.1 From GIS to Zones — building the demand substrate
 
-The city is partitioned into H3 hexes acting as **Traffic Analysis Zones (TAZ)**. Each zone's attributes are computed by spatial join over the ingested layers:
+The city is partitioned into **census tracts** acting as **Traffic Analysis Zones (TAZ)** — the same geography the demand data is published on, and the conventional TAZ basis in real-world travel demand modelling.
 
-- **Population** from census tracts, then **dasymetrically refined** — redistributed onto actual OSM building footprints weighted by `building:levels`, so residents sit where buildings actually are rather than smeared across a tract polygon.
+> **Revised in Phase 1** (was: H3 hexes, res ~9). Tracts won on three counts: the census/LODES inputs are *already* tract-indexed, so no lossy centroid-into-hex reaggregation step is needed; tract boundaries follow real features (rivers, freeways, rail), so the demand layer reads as the actual city rather than a honeycomb; and tracts are the standard TAZ unit, which keeps the §4.1.6 calibration comparable to published models. The cost is real and should be tracked: hexes are equal-area and uniformly subdividable, which tracts are not. Two consequences — (a) tracts are drawn to hold roughly *equal population*, so any choropleth over them must encode **density**, not raw counts, or it reads flat (already handled in the renderer); (b) the §6.3 level-of-detail plan of "coarser H3 when zoomed out" no longer has a free hierarchy and must instead aggregate tracts → block groups → counties, or reintroduce a hex grid purely as a rendering LOD.
+
+Each zone's attributes are computed by spatial join over the ingested layers:
+
+- **Population** from the census, then **dasymetrically refined** — redistributed onto actual OSM building footprints weighted by `building:levels`, so residents sit where buildings actually are rather than smeared uniformly across the tract polygon.
 - **Employment** from LODES/land-use, segmented by sector (office / retail / industrial / institutional).
 - **Attraction mass** from OSM POIs, weighted by category (a hospital or university generates far more trip-ends than a corner shop).
 - **Car ownership & income** proxies from census — these drive the mode-choice model per segment.
@@ -624,7 +629,7 @@ In **Plan/Build**, station-level editing drops into a **Three.js inspector** (em
 | World bundle initial load | ≤ 8 s on broadband (progressive: basemap first, sim graph streamed) |
 | Memory ceiling (client) | ≤ ~1.5 GB (WASM linear memory + GPU buffers) |
 
-Scaling to large metros: **level-of-detail** demand aggregation (coarser H3 when zoomed out), flow-packet aggregation instead of per-passenger agents, and viewport-culled rendering.
+Scaling to large metros: **level-of-detail** demand aggregation (tracts → block groups → counties when zoomed out; census geography nests, so the hierarchy is free even though it is not equal-area — see the §4.1.1 note), flow-packet aggregation instead of per-passenger agents, and viewport-culled rendering.
 
 ### 6.2 Data Provenance, Licensing & Ethics
 
@@ -756,13 +761,13 @@ The cheapest possible test of the core fantasy: is *watching a transit network y
 
 Prove the "world baking" pipeline (§1.4) end-to-end on **one mid-size city with excellent open data**. **City selected: Houston** (METRO GTFS feed mdb-2060; LODES/gazetteer census coverage for Harris, Fort Bend, Montgomery, Brazoria, Galveston; no existing heavy-rail metro, so the player builds from a clean slate).
 
-- 🔄 OSM extract → street/rail graph; GTFS parse → reference network; census join → H3 demand grid. *(GTFS ✅ — 115 routes / 21,878 trips / 8,793 stops / 229,813 shape points parsed into the reference network. Census→H3 ✅ — LODES RAC×2.15 population proxy + WAC jobs + gazetteer tract centroids → 1,494 H3-res-8 cells, 6.5M pop / 3.1M jobs; ACS B01003 pending a Census API key (keyless access was retired). OSM street/rail **graph** ⬜ — basemap is rendered OSM vector tiles, not yet an ingested routing graph.)*
-- ⬜ Conflation pass (GTFS stops snapped to OSM network) with a validation report of unmatched/malformed entities.
-- 🔄 PMTiles basemap + deck.gl rendering of the real city: streets, land use, demand heatmap, reference-network ghost overlay. *(deck.gl over MapLibre GL ✅ — dark OSM basemap, H3HexagonLayer demand heatmap (D), METRO reference ghost overlay (G), PathLayer lines / ScatterplotLayer stations & vehicles. Basemap is hosted OpenFreeMap tiles for now; self-hosted PMTiles ⬜.)*
-- 🔄 First **Baked World Bundle** artifact (versioned, CDN-servable) and the bake CLI that produces it. *(`npm run bake` → `public/world/houston/v1/{demand,gtfs_baseline,meta,bake_report}.json`, versioned + cached + provenance/attribution per §6.2; JSON stands in for PMTiles/Parquet formats.)*
-- 🔄 Ingestion validation/repair stage for malformed feeds (schema checks, orphan trips, broken shapes). *(bake_report.json counts bad shape rows, trips missing shapes, routes without shapes, unmatched tracts; repairs: shape resequencing, bad-coordinate drops, multi-URL source fallback. Full schema-check stage ⬜.)*
+- ✅ OSM extract → street/rail graph; GTFS parse → reference network; census join → tract demand zones. *(GTFS ✅ — 115 routes / 21,878 trips / 8,793 stops / 229,813 shape points parsed into the reference network. Census→zones ✅ — LODES RAC×2.15 population proxy + WAC jobs joined onto **1,560 census-tract polygons** (TIGERweb `Generalized_TAB2020`, the same 2020 vintage as the LODES block geocodes, so GEOIDs join exactly), 6.5M pop / 3.1M jobs, zero tracts dropped; ACS B01003 pending a Census API key (keyless access was retired). Zone geometry was H3 res-8 hexes until late Phase 1 — see the §4.1.1 revision note for why tracts replaced them and what that costs. OSM street/rail graph ✅ — Overpass queried as 48 cached tiles over the padded stop extent → 184,650 ways / 994,816 raw nodes collapsed to a **258,243-node, 343,502-edge routing graph**: 39,258 km road + 3,348 km rail, one-way flags and class per edge, 99.5% of edge length in a single connected component. `highway=service` is excluded on purpose — it triples the way count and routes nowhere.)*
+- ✅ Conflation pass (GTFS stops snapped to OSM network) with a validation report of unmatched/malformed entities. *(Mode-aware projection onto the graph — rail-only stops onto rails, road stops onto streets: **8,780 / 8,787 served stops matched (99.9%)**, median snap 5.9 m, p90 9.4 m, 99.4% within 25 m, all 80 rail stops matched. The 7 misses are named in `conflation.json` and are all park-and-rides and the Hobby Airport kerb — facilities reached only by the `service` drives the graph omits. Geometry independently re-derived from the artifacts and agrees to within the 1.1 m coordinate quantisation.)*
+- 🔄 PMTiles basemap + deck.gl rendering of the real city: streets, land use, demand heatmap, reference-network ghost overlay. *(deck.gl over MapLibre GL ✅ — dark OSM basemap, **PolygonLayer census-tract demand choropleth** (D), METRO reference ghost overlay (G), PathLayer lines / ScatterplotLayer stations & vehicles / IconLayer interchanges. The choropleth encodes **density** (pop+jobs per km²) under quantile classification on a validated single-hue amber ramp: tracts hold roughly equal population by design, so raw counts read flat, and density here is heavy-tailed enough (peak ≈ 35× median) that log and percentile-stretch scales both collapsed the city into one or two ramp steps. Basemap is hosted OpenFreeMap tiles for now; self-hosted PMTiles ⬜ — the last open item in this phase.)*
+- 🔄 First **Baked World Bundle** artifact (versioned, CDN-servable) and the bake CLI that produces it. *(One CLI, six stages: `npm run bake` → `public/world/houston/v1/{demand,gtfs_baseline,stops,street_graph,conflation,meta,bake_report}.json`, versioned + cached + provenance/attribution per §6.2; JSON stands in for PMTiles/Parquet formats. `--skip-network` skips the Overpass stages for a seconds-long demand-only re-bake. The 26 MB graph is deliberately **off the boot path** — the client fetches only demand/baseline/meta — which is what keeps the < 8 s exit gate reachable; streaming it is Phase-2 work, alongside the binary format it wants.)*
+- ✅ Ingestion validation/repair stage for malformed feeds (schema checks, orphan trips, broken shapes). *(Full GTFS schema + referential-integrity stage: required files/columns, duplicate keys, coordinate and `location_type` ranges, `route_type` domain, dangling `parent_station`/`route_id`/`service_id`/`shape_id`/`trip_id`/`stop_id`, non-increasing `stop_sequence`, unparseable or backwards times — streamed over all 1.4 M `stop_times` rows in ~1 s. Three severities: fatal stops the bake, error reports, warning informs. Houston comes back with **0 integrity errors** and 4 quality warnings (6 unserved stops, 6 tripless routes, 17 unused shapes, 4 unused services). Because a clean feed proves nothing, `npm run check:gtfs` injects 17 defects one at a time and asserts each is caught, plus a control asserting the untouched feed stays silent. It runs first in `npm run bake`, so a feed that cannot produce a trustworthy reference network fails loudly instead of yielding a silently-empty overlay. Earlier repairs — shape resequencing, bad-coordinate drops, multi-URL fallback — still apply downstream of it.)*
 
-**Exit gate:** a stranger can open a URL, see their recognizable real city with a demand heatmap, in < 8 s load on broadband.
+**Exit gate:** a stranger can open a URL, see their recognizable real city with a demand heatmap, in < 8 s load on broadband. — ✅ **met: 3.0 s.** Measured against the production build (`vite preview`) in headless Chromium, cold cache, throttled to 20 Mbit/s / 40 ms RTT, timing navigation → loading overlay dismissed (which fires downstream of the world bundle resolving). Boot payload **0.95 MB** over 11 requests: 490 KB JS + 11 KB CSS + 336 KB `demand.json` + 26 KB `gtfs_baseline.json` + ~100 KB basemap tiles, all gzipped. Headroom is ~2.6×, and the 26 MB street graph is deliberately off the boot path — it is bake/routing input, not client payload.
 **Retires:** §9-4 (GTFS/OSM quality variance — proven on real messy data, with the repair stage in place).
 
 ### Phase 2 — Simulation Kernel & Static Model (Months 4–6) ⬜

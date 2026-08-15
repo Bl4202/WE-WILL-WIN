@@ -1,10 +1,29 @@
 {
-  "generatedAt": "2026-07-20T04:33:05.220Z",
+  "generatedAt": "2026-08-01T21:32:21.480Z",
   "stages": {
+    "gtfsValidation": {
+      "filesPresent": 12,
+      "agencies": 1,
+      "stops": 8793,
+      "routes": 115,
+      "trips": 21878,
+      "stopTimeRows": 1414877,
+      "shapePoints": 229813,
+      "shapes": 345,
+      "services": 7,
+      "stopsServed": 8787,
+      "orphanStops": 6,
+      "shortTrips": 0,
+      "routesWithoutTrips": 6,
+      "unusedShapes": 17,
+      "unusedServices": 4,
+      "integrityErrors": 0
+    },
     "gtfs": {
       "routes": 115,
       "trips": 21878,
       "stops": 8793,
+      "servedStops": 8787,
       "shapePoints": 229813,
       "badShapeRows": 0,
       "tripsMissingShape": 0,
@@ -16,24 +35,56 @@
       "personsPerWorker": 2.15,
       "racBlockRows": 430986,
       "blocksInRegion": 59652,
-      "tracts": 1559,
-      "centroidsMatched": 1559,
-      "unmatched": 0
+      "tracts": 1559
     },
     "lodes": {
       "blockRows": 165213,
       "blocksInRegion": 30104,
       "tractsWithJobs": 1559
     },
-    "demandGrid": {
-      "h3Res": 8,
-      "zones": 1494,
+    "demandZones": {
+      "geometry": "TIGERweb Generalized_TAB2020 census tracts (1:500k)",
+      "tractsReturned": 1560,
+      "zones": 1560,
+      "multiPartTracts": 5,
+      "tractsWithoutGeometry": 0,
+      "tractsWithNoDemand": 0,
+      "demandTractsWithoutGeometry": 0,
+      "vertices": 49507,
       "totalPop": 6495795,
-      "totalJobs": 3127918,
-      "jobsTractsOutsideAcs": 1
+      "totalJobs": 3128641
+    },
+    "osmGraph": {
+      "tiles": 48,
+      "waysRaw": 184650,
+      "nodesRaw": 994816,
+      "graphNodes": 258243,
+      "graphEdges": 343502,
+      "roadKm": 39258,
+      "railKm": 3348,
+      "largestComponentShare": 0.995
+    },
+    "conflation": {
+      "stops": 8787,
+      "matched": 8780,
+      "unmatched": 7,
+      "matchedTight": 8730,
+      "medianDistM": 5.9,
+      "p90DistM": 9.4,
+      "maxDistM": 98.1,
+      "railStops": 80,
+      "railMatched": 80,
+      "toleranceM": 100,
+      "matchedPct": 99.9
     }
   },
+  "gtfsErrors": [],
   "warnings": [
-    "population is a LODES-RAC-derived proxy; switch to ACS B01003 once a Census API key is configured"
+    "6 stops never served by any trip",
+    "6 routes with no trips",
+    "17 shapes referenced by no trip",
+    "4 calendar services used by no trip",
+    "population is a LODES-RAC-derived proxy; switch to ACS B01003 once a Census API key is configured",
+    "7 stops found no mode-compatible way within 100 m — typically facilities reached only by highway=service drives: Maxey Road Park & Ride (64), Fuqua Park & Ride (81), North Shepherd Park & Ride (83), Kingwood Park & Ride (91), Hobby Airport (10567)"
   ]
 }

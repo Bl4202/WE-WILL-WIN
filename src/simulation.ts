@@ -14,6 +14,8 @@ import {
   DEFAULT_HEADWAY_SEC,
   DEST_DETERRENCE_M,
   DWELL_SEC,
+  LOCAL_DEMAND_FRACTION,
+  SAME_STATION_M,
   SIM_DT,
   TRAIN_CAPACITY,
   WALK_RADIUS,
@@ -74,6 +76,15 @@ export class Simulation {
   private readonly cumPop: number[];
   private readonly cumJobs: number[];
 
+  /** TEMP (see LOCAL_DEMAND_FRACTION, constants.ts): zone indices (into
+   *  `this.zones`) within WALK_RADIUS of any built station — mirrors
+   *  cumPop/cumJobs but restricted to this near-network subset. Rebuilt
+   *  alongside planCache on every network change. Delete together with
+   *  LOCAL_DEMAND_FRACTION. */
+  private nearNetworkZoneIdx: number[] = [];
+  private cumPopNear: number[] = [];
+  private cumJobsNear: number[] = [];
+
   /**
    * O/D plan cache keyed "originZone|destZone" — zone pairs repeat heavily,
    * so most spawns skip Dijkstra entirely. Cleared on any network change.
@@ -133,20 +144,33 @@ export class Simulation {
     if (points.length < 2) return null;
 
     const stationIds: number[] = [];
+    // Stations minted by this very call, so a line that loops back onto its
+    // own starting point reuses that station instead of stacking a second one
+    // on the same spot (the draft's points are not Stations yet, so they
+    // arrive here as repeated coordinates rather than repeated ids).
+    const minted: { pos: Vec2; id: number }[] = [];
     for (const p of points) {
       if (p.existingStationId !== undefined) {
         stationIds.push(p.existingStationId);
-      } else {
-        const id = this.nextStationId++;
-        this.stations.set(id, {
-          id,
-          name: `Station ${id}`,
-          pos: { ...p.pos },
-          lineIds: [],
-          waiting: [],
-        });
-        stationIds.push(id);
+        continue;
       }
+      const twin = minted.find(
+        (m) => Math.hypot(m.pos.x - p.pos.x, m.pos.y - p.pos.y) < SAME_STATION_M,
+      );
+      if (twin) {
+        stationIds.push(twin.id);
+        continue;
+      }
+      const id = this.nextStationId++;
+      this.stations.set(id, {
+        id,
+        name: `Station ${id}`,
+        pos: { ...p.pos },
+        lineIds: [],
+        waiting: [],
+      });
+      minted.push({ pos: { ...p.pos }, id });
+      stationIds.push(id);
     }
 
     const stationDist: number[] = [0];
@@ -175,6 +199,7 @@ export class Simulation {
     this.spawnFleet(line);
     this.planner.rebuild(this.lines, this.stations);
     this.planCache.clear();
+    this.rebuildNearNetworkZones(); // TEMP — see LOCAL_DEMAND_FRACTION
     this.networkVersion++;
     return line;
   }
@@ -190,28 +215,34 @@ export class Simulation {
       1,
       Math.min(16, Math.round((2 * oneWaySec) / line.headwaySec)),
     );
+    const last = line.stationIds.length - 1;
     for (let i = 0; i < count; i++) {
       const frac = count === 1 ? 0 : i / count;
       // Unfold the round trip: first half outbound, second half inbound.
       const along = frac < 0.5 ? frac * 2 : (1 - frac) * 2;
       const dist = along * line.length;
+      const dir: 1 | -1 = frac < 0.5 ? 1 : -1;
+      // Station at or behind `dist`, so the train sits in hop idx → idx+1.
       let idx = 0;
-      while (
-        idx < line.stationDist.length - 1 &&
-        line.stationDist[idx + 1] <= dist
-      ) {
-        idx++;
-      }
+      while (idx < last && line.stationDist[idx + 1] <= dist) idx++;
+      // `atStationIdx` is the stop *behind* the train, which depends on which
+      // way it faces: an outbound train just left idx and is heading for
+      // idx+1, an inbound one just left idx+1 and is heading back to idx.
+      // Clamping keeps the stop it is heading for on the line, so a train
+      // seeded at either end starts by running toward the terminus rather
+      // than pointing off the end of the line.
+      const atStationIdx =
+        dir === 1 ? Math.min(idx, last - 1) : Math.min(idx + 1, last);
       this.vehicles.push({
         id: this.nextVehicleId++,
         lineId: line.id,
         dist,
         prevDist: dist,
         speed: 0, // pulls away from a stand like any other departure
-        dir: frac < 0.5 ? 1 : -1,
+        dir,
         state: "running",
         dwellRemaining: 0,
-        atStationIdx: idx,
+        atStationIdx,
         onboard: [],
       });
     }
@@ -248,7 +279,11 @@ export class Simulation {
 
       const nextIdx = v.atStationIdx + v.dir;
       if (nextIdx < 0 || nextIdx >= line.stationIds.length) {
-        // Past a terminal without a stop marker — clamp defensively.
+        // Facing off the end of the line — turn around. Reversing (rather
+        // than just clamping) matters: with no stop ahead there is nothing
+        // to advance toward, so a train left pointing outward would sit
+        // here forever instead of resuming service.
+        v.dir = v.dir === 1 ? -1 : 1;
         v.speed = 0;
         v.dist = Math.max(0, Math.min(line.length, v.dist));
         continue;
@@ -348,26 +383,54 @@ export class Simulation {
     }
   }
 
+  // Gravity-flavoured destination weight: mass × distance deterrence (§4.1.3
+  // in spirit — the real doubly-constrained model arrives in Phase 2).
+  private gravityWeight(origin: Zone, z: Zone, amBound: boolean): number {
+    if (z.id === origin.id) return 0;
+    const d = Math.hypot(
+      z.center.x - origin.center.x,
+      z.center.y - origin.center.y,
+    );
+    return (amBound ? z.jobs : z.pop) * Math.exp(-d / DEST_DETERRENCE_M);
+  }
+
   /** One person-trip: home→work in the AM half, work→home in the PM half. */
   private spawnTrip(hour: number): void {
     const amBound = hour < 12;
-    const oi = this.sampleZone(amBound ? this.cumPop : this.cumJobs);
-    if (oi < 0) return;
-    const origin = this.zones[oi];
 
-    // Gravity-flavoured destination draw: mass × distance deterrence (§4.1.3
-    // in spirit — the real doubly-constrained model arrives in Phase 2).
-    const destWeights = this.zones.map((z) => {
-      if (z.id === origin.id) return 0;
-      const d = Math.hypot(
-        z.center.x - origin.center.x,
-        z.center.y - origin.center.y,
+    // TEMP demand-bootstrap hack (LOCAL_DEMAND_FRACTION, constants.ts) —
+    // delete this branch when Phase 2's calibrated model lands.
+    const useLocalPool =
+      this.nearNetworkZoneIdx.length > 1 &&
+      this.rng.next() < LOCAL_DEMAND_FRACTION;
+
+    let origin: Zone;
+    if (useLocalPool) {
+      const li = this.sampleZone(amBound ? this.cumPopNear : this.cumJobsNear);
+      if (li < 0) return;
+      origin = this.zones[this.nearNetworkZoneIdx[li]];
+    } else {
+      const oi = this.sampleZone(amBound ? this.cumPop : this.cumJobs);
+      if (oi < 0) return;
+      origin = this.zones[oi];
+    }
+
+    let dest: Zone;
+    if (useLocalPool) {
+      const weights = this.nearNetworkZoneIdx.map((zi) =>
+        this.gravityWeight(origin, this.zones[zi], amBound),
       );
-      return (amBound ? z.jobs : z.pop) * Math.exp(-d / DEST_DETERRENCE_M);
-    });
-    const di = this.rng.weightedIndex(destWeights);
-    if (di < 0) return;
-    const dest = this.zones[di];
+      const li = this.rng.weightedIndex(weights);
+      if (li < 0) return;
+      dest = this.zones[this.nearNetworkZoneIdx[li]];
+    } else {
+      const weights = this.zones.map((z) =>
+        this.gravityWeight(origin, z, amBound),
+      );
+      const di = this.rng.weightedIndex(weights);
+      if (di < 0) return;
+      dest = this.zones[di];
+    }
 
     const cacheKey = `${origin.id}|${dest.id}`;
     let cached = this.planCache.get(cacheKey);
@@ -410,6 +473,28 @@ export class Simulation {
       i--;
     }
     this.walking.splice(i, 0, id);
+  }
+
+  /** TEMP (see LOCAL_DEMAND_FRACTION): recompute the near-network zone pool
+   *  and its prefix sums. Call whenever stations change. */
+  private rebuildNearNetworkZones(): void {
+    this.nearNetworkZoneIdx = [];
+    for (let i = 0; i < this.zones.length; i++) {
+      if (this.stationsNear(this.zones[i].center).length > 0) {
+        this.nearNetworkZoneIdx.push(i);
+      }
+    }
+    this.cumPopNear = new Array(this.nearNetworkZoneIdx.length);
+    this.cumJobsNear = new Array(this.nearNetworkZoneIdx.length);
+    let p = 0;
+    let j = 0;
+    for (let k = 0; k < this.nearNetworkZoneIdx.length; k++) {
+      const z = this.zones[this.nearNetworkZoneIdx[k]];
+      p += z.pop;
+      j += z.jobs;
+      this.cumPopNear[k] = p;
+      this.cumJobsNear[k] = j;
+    }
   }
 
   private stationsNear(pos: Vec2): StationAccess[] {

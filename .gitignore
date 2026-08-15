@@ -2,6 +2,13 @@ node_modules/
 dist/
 .cache/
 
+# The baked routing graph — ~26 MB of derived OSM, 70× the rest of the repo,
+# and nothing loads it at runtime yet. `npm run bake` rebuilds it (a minute
+# from the .cache/osm tiles, ~30 min of Overpass without them).
+# Revisit when the Phase-2 kernel actually consumes it; it wants a CDN and a
+# binary format by then, not git.
+public/world/*/*/street_graph.json
+
 # env / secrets
 .env
 .env.*
