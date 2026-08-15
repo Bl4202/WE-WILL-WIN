@@ -215,28 +215,34 @@ export class Simulation {
       1,
       Math.min(16, Math.round((2 * oneWaySec) / line.headwaySec)),
     );
+    const last = line.stationIds.length - 1;
     for (let i = 0; i < count; i++) {
       const frac = count === 1 ? 0 : i / count;
       // Unfold the round trip: first half outbound, second half inbound.
       const along = frac < 0.5 ? frac * 2 : (1 - frac) * 2;
       const dist = along * line.length;
+      const dir: 1 | -1 = frac < 0.5 ? 1 : -1;
+      // Station at or behind `dist`, so the train sits in hop idx → idx+1.
       let idx = 0;
-      while (
-        idx < line.stationDist.length - 1 &&
-        line.stationDist[idx + 1] <= dist
-      ) {
-        idx++;
-      }
+      while (idx < last && line.stationDist[idx + 1] <= dist) idx++;
+      // `atStationIdx` is the stop *behind* the train, which depends on which
+      // way it faces: an outbound train just left idx and is heading for
+      // idx+1, an inbound one just left idx+1 and is heading back to idx.
+      // Clamping keeps the stop it is heading for on the line, so a train
+      // seeded at either end starts by running toward the terminus rather
+      // than pointing off the end of the line.
+      const atStationIdx =
+        dir === 1 ? Math.min(idx, last - 1) : Math.min(idx + 1, last);
       this.vehicles.push({
         id: this.nextVehicleId++,
         lineId: line.id,
         dist,
         prevDist: dist,
         speed: 0, // pulls away from a stand like any other departure
-        dir: frac < 0.5 ? 1 : -1,
+        dir,
         state: "running",
         dwellRemaining: 0,
-        atStationIdx: idx,
+        atStationIdx,
         onboard: [],
       });
     }
@@ -273,7 +279,11 @@ export class Simulation {
 
       const nextIdx = v.atStationIdx + v.dir;
       if (nextIdx < 0 || nextIdx >= line.stationIds.length) {
-        // Past a terminal without a stop marker — clamp defensively.
+        // Facing off the end of the line — turn around. Reversing (rather
+        // than just clamping) matters: with no stop ahead there is nothing
+        // to advance toward, so a train left pointing outward would sit
+        // here forever instead of resuming service.
+        v.dir = v.dir === 1 ? -1 : 1;
         v.speed = 0;
         v.dist = Math.max(0, Math.min(line.length, v.dist));
         continue;

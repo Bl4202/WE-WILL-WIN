@@ -158,8 +158,9 @@ export class MapRenderer {
   showDemand = false;
   showGhost = false;
 
-  private demandLayer: PolygonLayer<DemandPart> | null = null;
-  private ghostLayer: PathLayer | null = null;
+  /** Derived choropleth data, cached — but never the Layer instance itself
+   *  (see getDemandLayer). */
+  private demandParts: DemandPart[] | null = null;
   /** Track and station layers are cached separately so the vehicle layer can
    *  be composited between them (see update). */
   private cachedNetwork: { track: Layer; stations: Layer[] } | null = null;
@@ -320,9 +321,19 @@ export class MapRenderer {
    * Ranking spreads the tracts evenly across the ramp by construction, which
    * is what makes the urban structure legible; the trade is that colour now
    * encodes relative standing, not absolute density.
+   *
+   * Returns a *new* PolygonLayer every call (same `id`, same underlying data
+   * array). This layer is only in the `layers` list while `showDemand` is
+   * on, so toggling it off drops it from deck.gl's render list and deck.gl
+   * finalizes it (frees its GPU resources) — `Layer._initialize` then
+   * asserts `!this.internalState`, "finalized layer cannot be reused", if
+   * that exact instance is ever pushed again. A fresh instance with the same
+   * `id` is deck.gl's actual intended re-render pattern: it reconciles by id
+   * and reuses GPU resources when the data reference is unchanged, so this
+   * costs nothing beyond the one object allocation.
    */
   private getDemandLayer(): PolygonLayer<DemandPart> {
-    if (!this.demandLayer) {
+    if (!this.demandParts) {
       const zones = this.world.demand.zones;
 
       const order = zones
@@ -338,43 +349,42 @@ export class MapRenderer {
         // One datum per part keeps multi-part tracts (bay islands) intact.
         for (const rings of zones[i].parts) parts.push({ rings, t });
       }
-
-      this.demandLayer = new PolygonLayer<DemandPart>({
-        id: "demand-tracts",
-        data: parts,
-        getPolygon: (d) => d.rings,
-        filled: true,
-        extruded: false,
-        // A hairline border is what makes the tract fabric legible as
-        // discrete blocks rather than a smeared heat blob.
-        stroked: true,
-        getFillColor: (d) => rampColor(d.t),
-        getLineColor: [255, 255, 255, 30],
-        getLineWidth: 0.6,
-        lineWidthUnits: "pixels",
-        lineWidthMinPixels: 0.5,
-        pickable: false,
-      });
+      this.demandParts = parts;
     }
-    return this.demandLayer;
+
+    return new PolygonLayer<DemandPart>({
+      id: "demand-tracts",
+      data: this.demandParts,
+      getPolygon: (d) => d.rings,
+      filled: true,
+      extruded: false,
+      // A hairline border is what makes the tract fabric legible as
+      // discrete blocks rather than a smeared heat blob.
+      stroked: true,
+      getFillColor: (d) => rampColor(d.t),
+      getLineColor: [255, 255, 255, 30],
+      getLineWidth: 0.6,
+      lineWidthUnits: "pixels",
+      lineWidthMinPixels: 0.5,
+      pickable: false,
+    });
   }
 
+  /** New PathLayer every call — see getDemandLayer for why the *instance*
+   *  must not be cached across a toggle off/on. */
   private getGhostLayer(): PathLayer {
-    if (!this.ghostLayer) {
-      this.ghostLayer = new PathLayer({
-        id: "gtfs-ghost",
-        data: this.world.baseline.routes,
-        getPath: (r) => r.shape,
-        getColor: (r) =>
-          r.type <= 2 ? [255, 255, 255, 110] : [150, 170, 190, 40],
-        getWidth: (r) => (r.type <= 2 ? 3.5 : 1.5),
-        widthUnits: "pixels",
-        capRounded: true,
-        jointRounded: true,
-        pickable: false,
-      });
-    }
-    return this.ghostLayer;
+    return new PathLayer({
+      id: "gtfs-ghost",
+      data: this.world.baseline.routes,
+      getPath: (r) => r.shape,
+      getColor: (r) =>
+        r.type <= 2 ? [255, 255, 255, 110] : [150, 170, 190, 40],
+      getWidth: (r) => (r.type <= 2 ? 3.5 : 1.5),
+      widthUnits: "pixels",
+      capRounded: true,
+      jointRounded: true,
+      pickable: false,
+    });
   }
 
   // ── Player network (cached on network version + selection) ──────────
