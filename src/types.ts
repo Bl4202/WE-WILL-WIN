@@ -31,24 +31,152 @@ export interface Station {
   id: number;
   name: string;
   pos: Vec2;
+  /** Dominant engineering form of the station's first platforms. */
+  primaryAlignment: RailAlignment;
+  /** Metres relative to street level: negative underground, positive elevated. */
+  levelM: number;
+  platformLengthM: number;
+  platformCount: number;
+  entrances: number;
+  boardingsToday: number;
   /** Lines serving this station (enables transfers at shared stations). */
   lineIds: number[];
   /** Passengers currently waiting here, by id. */
   waiting: number[];
 }
 
+export type TransitMode = "metro" | "bus" | "regional-rail";
+export type RailAlignment = "surface" | "elevated" | "underground";
+export type LineAlignment = RailAlignment | "mixed";
+export type ServiceDirection = "bidirectional" | "one-way";
+export type FacilityType = "bus-hub" | "rail-terminal" | "airport" | "harbor";
+export type EnergyType = "electricity" | "diesel";
+export type RollingStockModelId =
+  | "metro-nova-m7"
+  | "metro-quietline-q2"
+  | "metro-titan-x"
+  | "bus-ecity-12"
+  | "bus-artic-d"
+  | "rail-arrow-emu"
+  | "rail-bilevel-d";
+
+export interface TrackSegmentDetail {
+  index: number;
+  alignment: RailAlignment;
+  /** Exact engineered centreline. Bus segments follow the street network. */
+  path: Vec2[];
+  /** Metres relative to street level. */
+  levelM: number;
+  lengthM: number;
+  speedLimitKph: number;
+  constructionCost: number;
+  demolitionCost: number;
+  demolishedBuildings: number;
+  /** Representative wayside sound level after depth/structure mitigation. */
+  noiseDb: number;
+  /** Deterministic clearance sites rendered as construction/demolition scars. */
+  demolitionSites: Vec2[];
+  /** Vector-tile feature ids removed from the 3D building layer after opening. */
+  demolishedBuildingFeatureIds: Array<string | number>;
+}
+
+export interface LineOperatingStats {
+  boardingsToday: number;
+  revenueToday: number;
+  energyCostToday: number;
+  maintenanceCostToday: number;
+  energyUsedToday: number;
+}
+
 export interface Line {
   id: number;
   name: string;
   color: string;
+  mode: TransitMode;
+  alignment: LineAlignment;
+  direction: ServiceDirection;
+  /** Alignment for every edge from station i to station i + 1. */
+  segmentAlignments: RailAlignment[];
+  segmentDetails: TrackSegmentDetail[];
+  /** One-time capital cost charged when this line was committed. */
+  constructionCost: number;
   /** Ordered station ids along the alignment. */
   stationIds: number[];
   /** Cumulative distance (m) from the first station to each station. */
   stationDist: number[];
   /** Total one-way length in metres. */
   length: number;
-  /** Scheduled headway between departures, seconds. */
+  /** Desired scheduled headway between departures, seconds. */
+  targetHeadwaySec: number;
+  /** Achievable headway from the assigned fleet. Zero means no service. */
   headwaySec: number;
+  vehicleIds: number[];
+  stats: LineOperatingStats;
+}
+
+export interface ConstructionEstimate {
+  trackCost: number;
+  stationCost: number;
+  systemsCost: number;
+  demolitionCost: number;
+  totalCost: number;
+  lengthM: number;
+  newStations: number;
+  demolishedBuildings: number;
+  averageNoiseDb: number;
+  averageDepthM: number;
+  segmentDetails: TrackSegmentDetail[];
+}
+
+export interface MobilityFacility {
+  id: number;
+  type: FacilityType;
+  name: string;
+  code?: string;
+  pos: Vec2;
+  /** Real-world facilities exist at scenario start and cost the player $0. */
+  builtIn: boolean;
+  connectsOutside: boolean;
+  connected: boolean;
+  constructionCost: number;
+  catchmentM: number;
+  trafficRelief: number;
+  dailyCapacity: number;
+}
+
+export interface EconomyState {
+  capitalBalance: number;
+  operatingBalance: number;
+  constructionSpent: number;
+  fleetSpent: number;
+  fareRevenueToday: number;
+  subsidyToday: number;
+  operatingCostToday: number;
+  energyCostToday: number;
+  maintenanceCostToday: number;
+  netCashflowToday: number;
+  /** Current run-rate, projected over a full day. */
+  projectedDailyCashflow: number;
+}
+
+export interface EnvironmentState {
+  /** Weighted network wayside noise on a 0-100 planning scale. */
+  networkNoiseIndex: number;
+  residentsExposedToNoise: number;
+  demolishedBuildings: number;
+  electricityKwhToday: number;
+  dieselLitersToday: number;
+  emissionsKgToday: number;
+}
+
+export interface TrafficState {
+  /** Citywide road pressure from 0 (free-flowing) to 100 (gridlock). */
+  congestionIndex: number;
+  carTripsToday: number;
+  avoidedCarTripsToday: number;
+  transitShare: number;
+  connectedGateways: number;
+  totalGateways: number;
 }
 
 /** "running" covers the whole accelerate → cruise → brake profile. */
@@ -56,7 +184,20 @@ export type VehicleState = "running" | "dwelling";
 
 export interface Vehicle {
   id: number;
-  lineId: number;
+  /** Null while stored in the unassigned fleet pool. */
+  lineId: number | null;
+  modelId: RollingStockModelId;
+  name: string;
+  capacity: number;
+  purchaseCost: number;
+  energyType: EnergyType;
+  energyPerKm: number;
+  noiseDb: number;
+  reliabilityPct: number;
+  conditionPct: number;
+  distanceTodayM: number;
+  lifetimeDistanceM: number;
+  energyUsedToday: number;
   /** Distance along the line polyline from station 0, metres. */
   dist: number;
   /** `dist` at the start of the current tick — the renderer lerps from it. */
@@ -122,5 +263,10 @@ export interface SimSnapshot {
   lines: Map<number, Line>;
   vehicles: Vehicle[];
   passengers: Map<number, Passenger>;
+  facilities: MobilityFacility[];
+  mobilityVersion: number;
+  economy: EconomyState;
+  environment: EnvironmentState;
+  traffic: TrafficState;
   kpis: Kpis;
 }

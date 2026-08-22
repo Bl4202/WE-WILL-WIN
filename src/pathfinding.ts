@@ -8,8 +8,9 @@
  * stand-in for the RAPTOR/hyperpath assignment of §4.1.5, but it already
  * makes transfers and waiting "real" so network design choices matter.
  */
-import { DWELL_SEC, TRANSFER_PENALTY_SEC } from "./constants";
+import { TRANSFER_PENALTY_SEC } from "./constants";
 import { runTimeSec } from "./kinematics";
+import { getTransitModeSpec } from "./mobility";
 import type { Line, Station, TripLeg } from "./types";
 
 /** A candidate access/egress station with its walk-time cost (seconds). */
@@ -51,6 +52,11 @@ export class TransitPlanner {
     };
 
     for (const line of lines.values()) {
+      // Track can be open before rolling stock is funded. It is visible on
+      // the map, but it is not a usable transit service until at least one
+      // physical vehicle has been bought and assigned.
+      if (line.vehicleIds.length === 0 || line.headwaySec <= 0) continue;
+      const spec = getTransitModeSpec(line.mode, line.alignment);
       for (let i = 0; i < line.stationIds.length; i++) {
         const sid = line.stationIds[i];
         // Board: expected wait is half the headway.
@@ -58,14 +64,19 @@ export class TransitPlanner {
         // Alight back to the street (transfer penalty paid on exit; the
         // final alight at the destination is free via the goal check).
         add(key(sid, line.id), key(sid, OFF_LINE), TRANSFER_PENALTY_SEC);
-        // Ride to adjacent stations, both directions (vehicles ping-pong).
-        for (const j of [i - 1, i + 1]) {
+        // Bidirectional services can be ridden either way. A one-way line
+        // only exposes forward edges; its vehicles deadhead back to origin.
+        const neighbors =
+          line.direction === "one-way" ? [i + 1] : [i - 1, i + 1];
+        for (const j of neighbors) {
           if (j < 0 || j >= line.stationIds.length) continue;
           const rideDist = Math.abs(line.stationDist[j] - line.stationDist[i]);
           add(
             key(sid, line.id),
             key(line.stationIds[j], line.id),
-            runTimeSec(rideDist) + DWELL_SEC,
+            (runTimeSec(rideDist) / spec.speedFactor) *
+              (1 + spec.congestionExposure * 0.45) +
+              spec.dwellSec,
           );
         }
       }
