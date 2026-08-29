@@ -743,7 +743,7 @@ This section is the living development timeline. It maps the entire arc — from
 | **M6 — Multiplayer** | 8 | Server-authoritative session sim; async leaderboards + ghosts; co-op; competitive operators | Months 27–32 |
 | **v1.0 — Launch** | 9 | Hardening, content, live-ops readiness, launch | Months 33–36 |
 
-### Phase 0 — Throwaway Prototype: "Dots on Lines" (Weeks 1–6) 🔄
+### Phase 0 — Throwaway Prototype: "Dots on Lines" (Weeks 1–6) ✅
 
 The cheapest possible test of the core fantasy: is *watching a transit network you designed come alive* fun, before any real data or real tech is involved?
 
@@ -751,7 +751,7 @@ The cheapest possible test of the core fantasy: is *watching a transit network y
 - ✅ Pure-TypeScript toy: a hardcoded fictional grid city (~50 zones), canvas 2D rendering. *(Vite + strict TS; 7×7 demand grid with jobs-heavy core and pop-heavy ring; deterministic fixed-timestep 4 Hz kernel with seeded PRNG — the §4.3/§6.3 determinism discipline kept from day one.)*
 - ✅ Click-to-draw lines and stations; vehicles as dots moving on schedules; passengers as counts that spawn, wait, board, alight via naive shortest-path. *(Snap-to-station drawing creates transfer stations; Dijkstra over (station, line) states with headway wait + transfer penalty; crush-capacity boarding with left-behinds; AM/PM directional demand with hourly profile.)*
 - ✅ One KPI readout (daily boardings) and a pause/speed control. *(Glance strip: clock, pause/0.5×/1×/4×/~1 day-min controls, daily boardings + waiting/completed/unserved minor stats; minimal station/line Focus panel.)*
-- ⬜ Playtest with 5–10 people: do they lean in and draw a second line without being told to?
+- ✅ Playtest with 5–10 people: do they lean in and draw a second line without being told to?
 
 **Deliberately excluded:** real data, Rust/WASM, deck.gl, economy, everything else. This code is scaffolding and will be deleted.
 **Exit gate:** playtesters unprompted redesign their network to chase the boardings number — evidence the observe→replan loop has intrinsic pull.
