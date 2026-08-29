@@ -3,147 +3,334 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Metro — Phase 0 Prototype</title>
+    <meta
+      name="description"
+      content="Design, fund, and operate a realistic transit network across Houston."
+    />
+    <meta name="theme-color" content="#071116" />
+    <title>Transit Authority — Houston</title>
     <link rel="stylesheet" href="/src/style.css" />
   </head>
-  <body>
+  <body data-theme="dark">
     <div id="app">
-      <div id="map"></div>
-      <div id="loading">Loading Houston world bundle…</div>
+      <div id="map" aria-label="Interactive Houston transit operations map"></div>
 
-      <!-- Sidebar: clock, speed, layers (GDD §5.2/§5.3 reduced to Phase-0) -->
-      <aside id="sidebar">
-        <button id="sidebar-toggle" type="button" aria-label="Collapse sidebar">
-          ‹
+      <div id="loading" role="status" aria-live="polite">
+        <div class="loading-shell">
+          <div class="loading-mark" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </div>
+          <div class="loading-copy">
+            <strong>Preparing Houston</strong>
+            <span>Loading buildings, mobility data, and the simulation</span>
+          </div>
+          <div class="loading-track" aria-hidden="true"><span></span></div>
+        </div>
+      </div>
+
+      <div class="map-brand" aria-label="Transit Authority Houston">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32" fill="none">
+            <path d="M6 24V8l10 8 10-8v16" />
+            <circle cx="6" cy="24" r="2.2" />
+            <circle cx="16" cy="16" r="2.2" />
+            <circle cx="26" cy="24" r="2.2" />
+          </svg>
+        </span>
+        <span><strong>Transit Authority</strong><small>Houston control</small></span>
+      </div>
+
+      <div id="top-controls" aria-label="View controls">
+        <button id="toggle-view" class="top-control" type="button" title="Switch map view">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+            <path d="m4 8 8-4 8 4-8 4-8-4Z" />
+            <path d="m4 8v8l8 4 8-4V8M12 12v8" />
+          </svg>
+          <span id="view-toggle-label">3D</span>
         </button>
+        <button id="toggle-theme" class="top-control icon-only" type="button" title="Toggle light theme" aria-label="Toggle light theme">
+          <svg class="theme-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+            <path d="M20 15.2A8.5 8.5 0 1 1 8.8 4 7 7 0 0 0 20 15.2Z" />
+          </svg>
+          <svg class="theme-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+            <circle cx="12" cy="12" r="4" />
+            <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+          </svg>
+        </button>
+        <button id="settings-open" class="top-control icon-only" type="button" title="Settings" aria-label="Open settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.8 1.8 0 0 0 .4 2l.1.1-2.8 2.8-.1-.1a1.8 1.8 0 0 0-2-.4 1.8 1.8 0 0 0-1.1 1.6v.2h-4V21a1.8 1.8 0 0 0-1.1-1.6 1.8 1.8 0 0 0-2 .4l-.1.1-2.8-2.8.1-.1a1.8 1.8 0 0 0 .4-2A1.8 1.8 0 0 0 3 13.9h-.2v-4H3a1.8 1.8 0 0 0 1.6-1.1 1.8 1.8 0 0 0-.4-2l-.1-.1 2.8-2.8.1.1a1.8 1.8 0 0 0 2 .4A1.8 1.8 0 0 0 10.1 3v-.2h4V3a1.8 1.8 0 0 0 1.1 1.6 1.8 1.8 0 0 0 2-.4l.1-.1 2.8 2.8-.1.1a1.8 1.8 0 0 0-.4 2 1.8 1.8 0 0 0 1.6 1.1h.2v4h-.2A1.8 1.8 0 0 0 19.4 15Z" />
+          </svg>
+        </button>
+      </div>
+
+      <aside id="sidebar" class="context-panel" aria-label="Transit planning controls">
+        <header class="panel-head">
+          <div>
+            <span id="sidebar-kicker" class="eyebrow">Network command</span>
+            <h1 id="sidebar-title">Houston system</h1>
+          </div>
+          <button id="sidebar-toggle" class="icon-btn" type="button" aria-label="Close panel" aria-expanded="true">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" aria-hidden="true">
+              <path d="m5 5 10 10M15 5 5 15" />
+            </svg>
+          </button>
+        </header>
 
         <div class="sidebar-inner">
-          <div class="side-block">
-            <span class="block-title">Clock</span>
-            <span id="clock">Day 1 · 05:00</span>
-          </div>
-
-          <div class="side-block">
-            <span class="block-title">Speed</span>
-            <div id="time-controls">
-              <button data-speed="0" title="Pause (Space)">
-                <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true">
-                  <rect x="3" y="2" width="3.4" height="12" />
-                  <rect x="9.6" y="2" width="3.4" height="12" />
-                </svg>
-              </button>
-              <button data-speed="1" title="Slow motion — half real time">0.5×</button>
-              <button data-speed="2" class="active" title="Real time">1×</button>
-              <button data-speed="3" title="Fast 10×">10×</button>
-              <button data-speed="4" title="Very fast — 1 hour/min">60×</button>
-              <button data-speed="5" title="Fastest — ~1 day/min">≫</button>
+          <section id="overview-options" class="panel-section">
+            <div class="section-title-row">
+              <span class="block-title">Network pulse</span>
+              <span class="live-chip"><i></i>Live</span>
             </div>
-          </div>
+            <div class="headline-stat compact">
+              <span class="stat-label">Boardings today</span>
+              <div id="kpi-boardings"><strong>0</strong><span>rides</span></div>
+              <div id="kpi-yesterday" class="stat-sub hidden"></div>
+            </div>
+            <div class="metric-grid">
+              <span><small>Waiting</small><strong id="stat-waiting">0</strong></span>
+              <span><small>Completed</small><strong id="stat-completed">0</strong></span>
+              <span><small>Unserved</small><strong id="stat-unserved">0</strong></span>
+              <span><small>Congestion</small><strong id="stat-congestion">48/100</strong></span>
+              <span><small>Transit share</small><strong id="stat-transit-share">0%</strong></span>
+              <span><small>Car trips</small><strong id="stat-car-trips">0</strong></span>
+              <span><small>Stations</small><strong id="stat-stations">0</strong></span>
+              <span><small>Lines</small><strong id="stat-lines">0</strong></span>
+              <span><small>Gateways</small><strong id="stat-gateways">0/0</strong></span>
+              <span><small>Network</small><strong id="stat-length">0 km</strong></span>
+              <span><small>Noise</small><strong id="stat-noise">0/100</strong></span>
+              <span><small>Emissions</small><strong id="stat-emissions">0 kg</strong></span>
+            </div>
+            <p class="panel-note">Select a station, route, or train on the map for live operations detail.</p>
+          </section>
 
-          <!-- Mode switcher (GDD §5.3, reduced to Phase-0 scope) -->
-          <div class="side-block">
-            <span class="block-title">Tools</span>
-            <nav id="mode-rail">
-              <button id="mode-inspect" class="mode-btn active" title="Inspect (Esc)">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-                  <circle cx="10.5" cy="10.5" r="6.5" />
-                  <line x1="20" y1="20" x2="15.3" y2="15.3" />
-                </svg>
-              </button>
-              <button id="mode-build" class="mode-btn" title="Plan / Build a line (B)">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M4 20l1-4L15.5 5.5l3 3L8 19l-4 1z" />
-                  <path d="M13.5 7l3 3" />
-                </svg>
-              </button>
-              <button id="btn-finish-line" class="mode-btn hidden" title="Finish line (Enter)">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <polyline points="4 12 9.5 17.5 20 6" />
-                </svg>
-              </button>
-            </nav>
-          </div>
+          <section id="build-options" class="panel-section hidden" aria-labelledby="service-label">
+            <div class="section-title-row">
+              <span id="service-label" class="block-title">Construction type</span>
+              <span id="build-affordability" class="affordability">Planning</span>
+            </div>
 
-          <div class="side-block">
-            <span class="block-title">Layers</span>
+            <div id="service-picker" class="choice-grid three">
+              <button type="button" data-transit-mode="metro" class="choice-btn active">
+                <strong>Metro</strong><small>high capacity</small>
+              </button>
+              <button type="button" data-transit-mode="bus" class="choice-btn">
+                <strong>Bus</strong><small>street running</small>
+              </button>
+              <button type="button" data-transit-mode="regional-rail" class="choice-btn">
+                <strong>Rail</strong><small>regional reach</small>
+              </button>
+            </div>
+
+            <div class="control-group">
+              <span class="mini-label">Service direction</span>
+              <div class="choice-grid two">
+                <button type="button" data-direction="bidirectional" class="choice-btn active">
+                  <strong>Two-way</strong><small>both directions</small>
+                </button>
+                <button type="button" data-direction="one-way" class="choice-btn">
+                  <strong>One-way</strong><small>lower fleet need</small>
+                </button>
+              </div>
+            </div>
+
+            <div id="alignment-picker" class="control-group">
+              <span class="mini-label">Next segment engineering</span>
+              <div class="choice-grid three alignment-grid">
+                <button type="button" data-alignment="surface" class="choice-btn active">
+                  <strong>Surface</strong><small>cheap · noisy</small>
+                </button>
+                <button type="button" data-alignment="elevated" class="choice-btn">
+                  <strong>Elevated</strong><small>fast · loudest</small>
+                </button>
+                <button type="button" data-alignment="underground" class="choice-btn">
+                  <strong>Tunnel</strong><small>quiet · costly</small>
+                </button>
+              </div>
+            </div>
+
+            <label id="depth-picker" class="depth-picker unavailable">
+              <span><span class="mini-label">Tunnel depth</span><strong id="depth-value">16 m</strong></span>
+              <input id="tunnel-depth" type="range" min="8" max="40" step="4" value="16" />
+              <small>Deeper tunnels cost more but sharply reduce surface noise and property clearance.</small>
+            </label>
+
+            <div class="build-estimate">
+              <div class="estimate-total">
+                <span><small>Blueprint total</small><strong id="build-cost">$0</strong></span>
+                <span id="build-breakdown">Place two stations to price the route</span>
+              </div>
+              <div class="estimate-grid">
+                <span><small>Clearance</small><strong id="estimate-demolition">0 buildings</strong></span>
+                <span><small>Wayside noise</small><strong id="estimate-noise">—</strong></span>
+                <span><small>Avg. depth</small><strong id="estimate-depth">0 m</strong></span>
+              </div>
+            </div>
+
+            <div class="build-actions">
+              <button id="btn-undo-line" class="secondary-btn" type="button">Undo point</button>
+              <button id="btn-finish-line" class="primary-btn" type="button" disabled>Open infrastructure</button>
+            </div>
+          </section>
+
+          <section id="fleet-options" class="panel-section hidden" aria-labelledby="fleet-label">
+            <div class="section-title-row">
+              <span id="fleet-label" class="block-title">Fleet pool</span>
+              <span id="fleet-owned" class="count-chip">0 owned</span>
+            </div>
+            <label class="select-field">
+              <span>Manage line</span>
+              <select id="fleet-line-select" aria-label="Line receiving an available vehicle">
+                <option value="">Build a line first</option>
+              </select>
+            </label>
+            <div id="fleet-line-summary" class="fleet-line-summary">
+              Buy vehicles into the pool, then assign them to a compatible line.
+            </div>
+            <div id="fleet-catalog" class="fleet-catalog"></div>
+            <p class="panel-note">Purchases enter the pool. Energy, crew, and service wear begin only after assignment.</p>
+          </section>
+
+          <details id="hub-builders" class="panel-details">
+            <summary><span>Build mobility hub</span><span>⌄</span></summary>
+            <div class="hub-grid">
+              <button type="button" data-facility-type="bus-hub"><strong>Bus hub</strong><small>$35M</small></button>
+              <button type="button" data-facility-type="rail-terminal"><strong>Rail terminal</strong><small>$250M</small></button>
+              <button type="button" data-facility-type="harbor"><strong>Harbor</strong><small>$650M</small></button>
+              <button type="button" data-facility-type="airport"><strong>Airport</strong><small>$2.5B</small></button>
+            </div>
+            <p>Regional gateways become active when a station enters their catchment.</p>
+          </details>
+
+          <details class="panel-details" open>
+            <summary><span>Map layers</span><span>⌄</span></summary>
             <div id="layer-toggles">
-              <button id="toggle-demand" class="bar-btn" title="Demand heatmap (D)">Demand</button>
-              <button id="toggle-ghost" class="bar-btn" title="METRO reference network (G)">METRO ghost</button>
+              <button id="toggle-traffic" class="layer-btn active" type="button" aria-pressed="true">
+                <span><strong>Road traffic</strong><small>highways + live pressure</small></span>
+                <span class="switch" aria-hidden="true"><i></i></span>
+              </button>
+              <button id="toggle-demand" class="layer-btn" type="button" aria-pressed="false">
+                <span><strong>Demand</strong><small>population + jobs</small></span>
+                <span class="switch" aria-hidden="true"><i></i></span>
+              </button>
+              <button id="toggle-ghost" class="layer-btn" type="button" aria-pressed="false">
+                <span><strong>METRO reference</strong><small>real GTFS routes</small></span>
+                <span class="switch" aria-hidden="true"><i></i></span>
+              </button>
             </div>
-          </div>
+          </details>
 
-          <!-- Placeholder mark — swap for real branding later. -->
-          <div id="sidebar-logo">
-            <img
-              src="https://placehold.co/400x400/000000/FFFFFF/png?text=METRO"
-              alt="Metro placeholder logo"
-            />
-          </div>
-
-          <div class="side-block" id="instructions">
-            <span class="block-title">Instructions</span>
-            <dl>
-              <dt><kbd>B</kbd></dt>
-              <dd>draw a line</dd>
-              <dt><kbd>Click</kbd></dt>
-              <dd>place a station, or tap one to connect</dd>
-              <dt><kbd>Enter</kbd></dt>
-              <dd>finish the line</dd>
-              <dt><kbd>Esc</kbd></dt>
-              <dd>cancel / clear selection</dd>
-              <dt><kbd>Drag</kbd></dt>
-              <dd>pan · scroll to zoom</dd>
-            </dl>
-          </div>
+          <p class="data-credit">World data · OpenStreetMap · METRO · US Census</p>
         </div>
       </aside>
 
-      <!-- Stats + selection inspector, stacked so the inspector reflows
-           cleanly under the stats card with no manual offset math. -->
-      <div id="right-stack">
-        <section id="card-stats" class="float-card">
-          <div class="card-head">
-            <div class="headline-stat">
-              <span class="stat-label">Daily boardings</span>
-              <div id="kpi-boardings"><strong>0</strong></div>
-            </div>
-            <button class="fold-btn" type="button" aria-label="Collapse">⌄</button>
-          </div>
-          <div class="card-body">
-            <div class="card-body-inner">
-              <div id="kpi-yesterday" class="stat-sub hidden"></div>
-              <div class="stat-grid">
-                <div class="stat-cell">
-                  <span class="stat-label accent-waiting">Waiting</span>
-                  <span id="stat-waiting" class="stat-value">0</span>
-                </div>
-                <div class="stat-cell">
-                  <span class="stat-label accent-completed">Completed</span>
-                  <span id="stat-completed" class="stat-value">0</span>
-                </div>
-                <div class="stat-cell">
-                  <span class="stat-label accent-unserved">Unserved</span>
-                  <span id="stat-unserved" class="stat-value">0</span>
-                </div>
-                <div class="stat-cell">
-                  <span class="stat-label">Stations</span>
-                  <span id="stat-stations" class="stat-value">0</span>
-                </div>
-                <div class="stat-cell">
-                  <span class="stat-label">Lines</span>
-                  <span id="stat-lines" class="stat-value">0</span>
-                </div>
-                <div class="stat-cell">
-                  <span class="stat-label">Network</span>
-                  <span id="stat-length" class="stat-value">0.0 km</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
+      <button id="sidebar-restore" class="round-map-btn hidden" type="button" aria-label="Open command panel" title="Open command panel">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+          <path d="M4 6h16M4 12h16M4 18h10" />
+        </svg>
+      </button>
 
-        <div id="focus-panel" class="float-card hidden"></div>
+      <div id="right-stack">
+        <section id="focus-panel" class="focus-panel hidden" aria-live="polite"></section>
       </div>
+
+      <div id="context-hint" role="status" aria-live="polite">
+        <span class="hint-dot" aria-hidden="true"></span>
+        <span id="context-hint-text">Select a station or line to inspect operations</span>
+      </div>
+
+      <footer id="bottom-bar" aria-label="Simulation and authority status">
+        <nav id="mode-rail" aria-label="Network tools">
+          <button id="mode-inspect" class="mode-btn active" type="button" title="Inspect">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+              <circle cx="10.5" cy="10.5" r="6.5" /><path d="m15.3 15.3 4.7 4.7" />
+            </svg>
+            <span>Inspect</span>
+          </button>
+          <button id="mode-build" class="mode-btn" type="button" title="Build line">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+              <path d="M4 18h4l3-6 4 2 5-8" /><circle cx="4" cy="18" r="2" /><circle cx="11" cy="12" r="2" /><circle cx="15" cy="14" r="2" /><circle cx="20" cy="6" r="2" />
+            </svg>
+            <span>Build</span>
+          </button>
+          <button id="mode-fleet" class="mode-btn" type="button" title="Fleet pool and assignments">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+              <rect x="5" y="3" width="14" height="16" rx="3" /><path d="M8 7h8v6H8zM8 19v2M16 19v2" /><circle cx="9" cy="16" r="1" /><circle cx="15" cy="16" r="1" />
+            </svg>
+            <span>Fleet</span>
+          </button>
+        </nav>
+
+        <div class="bottom-divider"></div>
+
+        <div class="clock-cluster">
+          <time id="clock"><strong>Day 1</strong><span>05:00</span></time>
+          <div id="time-controls" aria-label="Simulation speed">
+            <button data-speed="0" title="Pause"><span>Ⅱ</span></button>
+            <button data-speed="1" title="Half speed">½</button>
+            <button data-speed="2" class="active" title="Real time">1×</button>
+            <button data-speed="3" title="Ten times">10×</button>
+            <button data-speed="4" title="Sixty times">60×</button>
+            <button data-speed="5" title="Day per minute">≫</button>
+          </div>
+        </div>
+
+        <div class="bottom-divider"></div>
+
+        <div class="bottom-stat money-stat">
+          <span class="bottom-icon money-icon" aria-hidden="true">$</span>
+          <span><small>Capital</small><strong id="capital-balance">$4.00B</strong></span>
+        </div>
+        <div id="cashflow-stat" class="bottom-stat positive">
+          <span class="bottom-icon trend-icon" aria-hidden="true">↗</span>
+          <span><small>Daily cashflow</small><strong id="current-cashflow">+$185K</strong></span>
+        </div>
+        <div class="bottom-stat">
+          <span class="bottom-icon passenger-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <circle cx="9" cy="8" r="3" /><circle cx="17" cy="9" r="2.3" /><path d="M3.5 20c.3-4 2-6 5.5-6s5.2 2 5.5 6M14 15c3.7-.8 5.8 1 6.2 5" />
+            </svg>
+          </span>
+          <span><small>Active passengers</small><strong id="active-passengers">0</strong></span>
+        </div>
+        <div class="bottom-stat operations-stat">
+          <span><small>Operations</small><strong id="operating-balance">$75.0M</strong></span>
+        </div>
+      </footer>
+
+      <dialog id="settings-dialog">
+        <form method="dialog" class="settings-shell">
+          <header>
+            <div><span class="eyebrow">Game preferences</span><h2>Settings</h2></div>
+            <button id="settings-close" class="icon-btn" value="close" aria-label="Close settings">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"><path d="m5 5 10 10M15 5 5 15" /></svg>
+            </button>
+          </header>
+          <div class="settings-content">
+            <section>
+              <div class="setting-copy"><strong>Color theme</strong><small>Switch the entire map and interface palette.</small></div>
+              <div class="segmented">
+                <button type="button" data-theme-choice="dark">Dark</button>
+                <button type="button" data-theme-choice="light">Light</button>
+              </div>
+            </section>
+            <section>
+              <div class="setting-copy"><strong>Default map view</strong><small>3D is the default; 2D keeps a flat planning view.</small></div>
+              <div class="segmented">
+                <button type="button" data-view-choice="3d">3D city</button>
+                <button type="button" data-view-choice="2d">2D map</button>
+              </div>
+            </section>
+            <section class="keybind-section">
+              <div class="setting-copy"><strong>Keyboard controls</strong><small>Select a key, then press its replacement.</small></div>
+              <div id="keybind-grid"></div>
+              <button id="reset-keybinds" class="secondary-btn" type="button">Reset keybinds</button>
+            </section>
+          </div>
+        </form>
+      </dialog>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

@@ -13,15 +13,25 @@ import {
   DAY_SEC,
   DEFAULT_HEADWAY_SEC,
   DEST_DETERRENCE_M,
-  DWELL_SEC,
   LOCAL_DEMAND_FRACTION,
   SAME_STATION_M,
   SIM_DT,
-  TRAIN_CAPACITY,
   WALK_RADIUS,
   WALK_SPEED,
 } from "./constants";
 import { nextSpeed, runTimeSec } from "./kinematics";
+import {
+  BASE_FARE,
+  DAILY_OPERATING_SUBSIDY,
+  FACILITY_SPECS,
+  STARTING_CAPITAL,
+  STARTING_OPERATING_BALANCE,
+  estimateLineConstruction,
+  facilityBuildCost,
+  getRollingStockSpec,
+  getTransitModeSpec,
+  normalizeAlignment,
+} from "./mobility";
 import {
   TransitPlanner,
   type PlannedTrip,
@@ -29,11 +39,21 @@ import {
 } from "./pathfinding";
 import { Rng } from "./rng";
 import type {
+  ConstructionEstimate,
+  EconomyState,
+  EnvironmentState,
+  FacilityType,
   Kpis,
   Line,
+  MobilityFacility,
   Passenger,
+  RailAlignment,
+  RollingStockModelId,
+  ServiceDirection,
   SimSnapshot,
   Station,
+  TrafficState,
+  TransitMode,
   Vec2,
   Vehicle,
   Zone,
@@ -43,6 +63,15 @@ import type {
 export interface LinePoint {
   pos: Vec2;
   existingStationId?: number;
+  /** Exact centreline from the previous stop. Used by road-routed bus lines. */
+  pathFromPrevious?: Vec2[];
+  /** Real building footprints crossed by the segment from the previous stop. */
+  demolitionSitesFromPrevious?: Vec2[];
+  demolitionFeatureIdsFromPrevious?: Array<string | number>;
+  /** Alignment of the segment from the previous point to this point. */
+  alignmentFromPrevious?: RailAlignment;
+  /** Metres relative to street level for the segment from the previous point. */
+  levelMFromPrevious?: number;
 }
 
 /** Relative trip-emission weight per hour of day (AM peak, midday, PM peak). */
@@ -51,6 +80,8 @@ const HOURLY_WEIGHT = [
   2.5, 2.2, 2.0, 2.5, 4.5, 6.5, 5.5, 3.0, 2.0, 1.5, 1.0, 0.5, // 12–23
 ] as const;
 const HOURLY_SUM = HOURLY_WEIGHT.reduce((a, b) => a + b, 0);
+const PEAK_HOURLY_WEIGHT = Math.max(...HOURLY_WEIGHT);
+const DESTINATION_CANDIDATES = 48;
 
 const LINE_COLORS = [
   "#e53935", "#1e88e5", "#43a047", "#fdd835", "#8e24aa",
@@ -63,6 +94,36 @@ export class Simulation {
   readonly lines = new Map<number, Line>();
   readonly vehicles: Vehicle[] = [];
   readonly passengers = new Map<number, Passenger>();
+  readonly facilities: MobilityFacility[];
+  readonly economy: EconomyState = {
+    capitalBalance: STARTING_CAPITAL,
+    operatingBalance: STARTING_OPERATING_BALANCE,
+    constructionSpent: 0,
+    fleetSpent: 0,
+    fareRevenueToday: 0,
+    subsidyToday: 0,
+    operatingCostToday: 0,
+    energyCostToday: 0,
+    maintenanceCostToday: 0,
+    netCashflowToday: 0,
+    projectedDailyCashflow: DAILY_OPERATING_SUBSIDY,
+  };
+  readonly environment: EnvironmentState = {
+    networkNoiseIndex: 0,
+    residentsExposedToNoise: 0,
+    demolishedBuildings: 0,
+    electricityKwhToday: 0,
+    dieselLitersToday: 0,
+    emissionsKgToday: 0,
+  };
+  readonly traffic: TrafficState = {
+    congestionIndex: 48,
+    carTripsToday: 0,
+    avoidedCarTripsToday: 0,
+    transitShare: 0,
+    connectedGateways: 0,
+    totalGateways: 0,
+  };
 
   private simTimeSec = 5 * 3600; // day 1, 05:00 — just before the AM peak
   private readonly rng = new Rng(0xc0ffee);
@@ -71,6 +132,9 @@ export class Simulation {
   /** Passenger ids in walk-access, sorted by arrival time (earliest last). */
   private walking: number[] = [];
   private networkVersion = 0;
+  private mobilityVersion = 0;
+  private trafficAccumulator = 0;
+  private economyDayStartedAt = this.simTimeSec;
 
   /** Prefix sums over zone pop/jobs for O(log n) origin sampling. */
   private readonly cumPop: number[];
@@ -100,6 +164,7 @@ export class Simulation {
   private nextLineId = 1;
   private nextVehicleId = 1;
   private nextPassengerId = 1;
+  private nextFacilityId: number;
 
   private kpis: Kpis = {
     boardingsToday: 0,
@@ -108,8 +173,18 @@ export class Simulation {
     unservedTrips: 0,
   };
 
-  constructor(zones: Zone[]) {
+  constructor(zones: Zone[], facilities: MobilityFacility[] = []) {
     this.zones = zones;
+    this.facilities = facilities.map((facility) => ({
+      ...facility,
+      pos: { ...facility.pos },
+    }));
+    this.nextFacilityId =
+      this.facilities.reduce((max, facility) => Math.max(max, facility.id), 0) +
+      1;
+    this.traffic.totalGateways = this.facilities.filter(
+      (facility) => facility.connectsOutside,
+    ).length;
     this.cumPop = new Array(zones.length);
     this.cumJobs = new Array(zones.length);
     let p = 0;
@@ -120,6 +195,7 @@ export class Simulation {
       this.cumPop[i] = p;
       this.cumJobs[i] = j;
     }
+    this.recalculateTraffic();
   }
 
   /** Sample a zone index from a prefix-sum array by binary search. */
@@ -139,9 +215,57 @@ export class Simulation {
 
   // ── Commands (applied between ticks by the game manager) ────────────
 
-  /** Commit a drawn line. Returns the new line, or null if invalid. */
-  commitLine(points: LinePoint[]): Line | null {
+  estimateLine(
+    points: LinePoint[],
+    mode: TransitMode,
+    alignment: RailAlignment,
+  ): ConstructionEstimate {
+    return estimateLineConstruction(
+      points,
+      mode,
+      normalizeAlignment(mode, alignment),
+    );
+  }
+
+  /** Commit a drawn service. Returns null if invalid or over budget. */
+  commitLine(
+    points: LinePoint[],
+    mode: TransitMode = "metro",
+    alignment: RailAlignment = "surface",
+    direction: ServiceDirection = "bidirectional",
+  ): Line | null {
     if (points.length < 2) return null;
+    if (
+      points.some(
+        (point) =>
+          point.existingStationId !== undefined &&
+          !this.stations.has(point.existingStationId),
+      )
+    ) {
+      return null;
+    }
+
+    const resolvedFallbackAlignment = normalizeAlignment(mode, alignment);
+    const segmentAlignments = points.slice(1).map((point) =>
+      normalizeAlignment(
+        mode,
+        point.alignmentFromPrevious ?? resolvedFallbackAlignment,
+      ),
+    );
+    const resolvedAlignment = segmentAlignments.every(
+      (segment) => segment === "underground",
+    )
+      ? "underground"
+      : segmentAlignments.every((segment) => segment === "surface")
+        ? "surface"
+        : "mixed";
+    const estimate = this.estimateLine(points, mode, resolvedFallbackAlignment);
+    if (
+      estimate.lengthM < SAME_STATION_M ||
+      estimate.totalCost > this.economy.capitalBalance
+    ) {
+      return null;
+    }
 
     const stationIds: number[] = [];
     // Stations minted by this very call, so a line that loops back onto its
@@ -149,7 +273,8 @@ export class Simulation {
     // on the same spot (the draft's points are not Stations yet, so they
     // arrive here as repeated coordinates rather than repeated ids).
     const minted: { pos: Vec2; id: number }[] = [];
-    for (const p of points) {
+    for (let pointIndex = 0; pointIndex < points.length; pointIndex++) {
+      const p = points[pointIndex];
       if (p.existingStationId !== undefined) {
         stationIds.push(p.existingStationId);
         continue;
@@ -162,10 +287,37 @@ export class Simulation {
         continue;
       }
       const id = this.nextStationId++;
+      const adjacentDetails = [
+        estimate.segmentDetails[pointIndex - 1],
+        estimate.segmentDetails[pointIndex],
+      ].filter((detail) => detail !== undefined);
+      const primaryAlignment: RailAlignment = adjacentDetails.some(
+        (detail) => detail.alignment === "underground",
+      )
+        ? "underground"
+        : adjacentDetails.some((detail) => detail.alignment === "elevated")
+          ? "elevated"
+          : "surface";
+      const matchingLevels = adjacentDetails
+        .filter((detail) => detail.alignment === primaryAlignment)
+        .map((detail) => detail.levelM);
+      const levelM =
+        matchingLevels.length > 0
+          ? matchingLevels.reduce((sum, value) => sum + value, 0) /
+            matchingLevels.length
+          : 0;
       this.stations.set(id, {
         id,
-        name: `Station ${id}`,
+        name: this.stationNameFor(p.pos, id),
         pos: { ...p.pos },
+        primaryAlignment,
+        levelM,
+        platformLengthM:
+          mode === "regional-rail" ? 240 : mode === "metro" ? 180 : 28,
+        platformCount: direction === "bidirectional" ? 2 : 1,
+        entrances:
+          primaryAlignment === "underground" ? 3 : primaryAlignment === "elevated" ? 2 : 1,
+        boardingsToday: 0,
         lineIds: [],
         waiting: [],
       });
@@ -175,77 +327,261 @@ export class Simulation {
 
     const stationDist: number[] = [0];
     for (let i = 1; i < stationIds.length; i++) {
-      const a = this.stations.get(stationIds[i - 1])!.pos;
-      const b = this.stations.get(stationIds[i])!.pos;
-      stationDist.push(stationDist[i - 1] + Math.hypot(b.x - a.x, b.y - a.y));
+      stationDist.push(
+        stationDist[i - 1] + estimate.segmentDetails[i - 1].lengthM,
+      );
     }
 
     const id = this.nextLineId++;
+    const modeSpec = getTransitModeSpec(mode, resolvedAlignment);
     const line: Line = {
       id,
-      name: `Line ${id}`,
+      name: `${modeSpec.shortLabel} ${id}`,
       color: LINE_COLORS[(id - 1) % LINE_COLORS.length],
+      mode,
+      alignment: resolvedAlignment,
+      direction,
+      segmentAlignments,
+      segmentDetails: estimate.segmentDetails,
+      constructionCost: estimate.totalCost,
       stationIds,
       stationDist,
       length: stationDist[stationDist.length - 1],
-      headwaySec: DEFAULT_HEADWAY_SEC,
+      targetHeadwaySec: DEFAULT_HEADWAY_SEC,
+      headwaySec: 0,
+      vehicleIds: [],
+      stats: {
+        boardingsToday: 0,
+        revenueToday: 0,
+        energyCostToday: 0,
+        maintenanceCostToday: 0,
+        energyUsedToday: 0,
+      },
     };
     this.lines.set(id, line);
+    this.economy.capitalBalance -= estimate.totalCost;
+    this.economy.constructionSpent += estimate.totalCost;
     for (const sid of stationIds) {
       const st = this.stations.get(sid)!;
       if (!st.lineIds.includes(id)) st.lineIds.push(id);
     }
 
-    this.spawnFleet(line);
     this.planner.rebuild(this.lines, this.stations);
     this.planCache.clear();
     this.rebuildNearNetworkZones(); // TEMP — see LOCAL_DEMAND_FRACTION
+    this.recomputeFacilityConnections();
+    this.recalculateEnvironment();
     this.networkVersion++;
     return line;
   }
 
-  /** Size the fleet from the round-trip time and headway, spread evenly. */
-  private spawnFleet(line: Line): void {
-    let runSec = 0;
+  buildFacility(type: FacilityType, pos: Vec2): MobilityFacility | null {
+    const spec = FACILITY_SPECS[type];
+    const cost = facilityBuildCost(type);
+    if (cost > this.economy.capitalBalance) return null;
+
+    if (
+      this.facilities.some(
+        (facility) =>
+          Math.hypot(facility.pos.x - pos.x, facility.pos.y - pos.y) <
+          (type === "airport" && facility.type === "airport" ? 8_000 : 1_000),
+      )
+    ) {
+      return null;
+    }
+
+    const number =
+      this.facilities.filter(
+        (facility) => facility.type === type && !facility.builtIn,
+      ).length + 1;
+    const facility: MobilityFacility = {
+      id: this.nextFacilityId++,
+      type,
+      name: `New ${spec.label} ${number}`,
+      pos: { ...pos },
+      builtIn: false,
+      connectsOutside: spec.connectsOutside,
+      connected: false,
+      constructionCost: cost,
+      catchmentM: spec.catchmentM,
+      trafficRelief: spec.trafficRelief,
+      dailyCapacity: spec.dailyCapacity,
+    };
+    this.facilities.push(facility);
+    this.economy.capitalBalance -= cost;
+    this.economy.constructionSpent += cost;
+    this.traffic.totalGateways = this.facilities.filter(
+      (item) => item.connectsOutside,
+    ).length;
+    this.recomputeFacilityConnections();
+    this.mobilityVersion++;
+    return facility;
+  }
+
+  /** Buy one physical vehicle into the unassigned fleet pool. */
+  purchaseVehicle(modelId: RollingStockModelId): Vehicle | null {
+    const stock = getRollingStockSpec(modelId);
+    if (stock.purchaseCost > this.economy.capitalBalance) {
+      return null;
+    }
+    const vehicleId = this.nextVehicleId++;
+    const vehicle: Vehicle = {
+      id: vehicleId,
+      lineId: null,
+      modelId,
+      name: `${stock.name} ${vehicleId}`,
+      capacity: stock.capacity,
+      purchaseCost: stock.purchaseCost,
+      energyType: stock.energyType,
+      energyPerKm: stock.energyPerKm,
+      noiseDb: stock.noiseDb,
+      reliabilityPct: stock.reliabilityPct,
+      conditionPct: 100,
+      distanceTodayM: 0,
+      lifetimeDistanceM: 0,
+      energyUsedToday: 0,
+      dist: 0,
+      prevDist: 0,
+      speed: 0,
+      dir: 1,
+      state: "dwelling",
+      dwellRemaining: 0,
+      atStationIdx: 0,
+      onboard: [],
+    };
+    this.vehicles.push(vehicle);
+    this.economy.capitalBalance -= stock.purchaseCost;
+    this.economy.fleetSpent += stock.purchaseCost;
+    this.networkVersion++;
+    return vehicle;
+  }
+
+  assignVehicle(vehicleId: number, lineId: number): boolean {
+    const vehicle = this.vehicles.find((item) => item.id === vehicleId);
+    const line = this.lines.get(lineId);
+    if (
+      !vehicle ||
+      !line ||
+      vehicle.lineId !== null ||
+      getRollingStockSpec(vehicle.modelId).mode !== line.mode
+    ) {
+      return false;
+    }
+    const fleetIndex = line.vehicleIds.length;
+    const startsInbound =
+      line.direction === "bidirectional" && fleetIndex % 2 === 1;
+    vehicle.lineId = line.id;
+    vehicle.dist = startsInbound ? line.length : 0;
+    vehicle.prevDist = vehicle.dist;
+    vehicle.speed = 0;
+    vehicle.dir = startsInbound ? -1 : 1;
+    vehicle.state = "dwelling";
+    vehicle.atStationIdx = startsInbound ? line.stationIds.length - 1 : 0;
+    vehicle.dwellRemaining = getTransitModeSpec(
+      line.mode,
+      line.alignment,
+    ).dwellSec;
+    line.vehicleIds.push(vehicle.id);
+    this.updateLineHeadway(line);
+    this.planner.rebuild(this.lines, this.stations);
+    this.planCache.clear();
+    this.recalculateEnvironment();
+    this.networkVersion++;
+    return true;
+  }
+
+  unassignVehicle(vehicleId: number): boolean {
+    const vehicle = this.vehicles.find((item) => item.id === vehicleId);
+    if (!vehicle || vehicle.lineId === null) return false;
+    const line = this.lines.get(vehicle.lineId);
+    if (!line) return false;
+    const station = this.stations.get(line.stationIds[vehicle.atStationIdx]);
+    if (station) {
+      for (const passengerId of vehicle.onboard) {
+        const passenger = this.passengers.get(passengerId);
+        if (!passenger) continue;
+        passenger.phase = "waiting";
+        station.waiting.push(passengerId);
+      }
+    }
+    vehicle.onboard = [];
+    line.vehicleIds = line.vehicleIds.filter((id) => id !== vehicle.id);
+    vehicle.lineId = null;
+    vehicle.dist = 0;
+    vehicle.prevDist = 0;
+    vehicle.speed = 0;
+    vehicle.state = "dwelling";
+    vehicle.dwellRemaining = 0;
+    vehicle.atStationIdx = 0;
+    this.updateLineHeadway(line);
+    this.planner.rebuild(this.lines, this.stations);
+    this.planCache.clear();
+    this.recalculateEnvironment();
+    this.networkVersion++;
+    return true;
+  }
+
+  private updateLineHeadway(line: Line): void {
+    if (line.vehicleIds.length === 0) {
+      line.headwaySec = 0;
+      return;
+    }
+    const fleet = line.vehicleIds
+      .map((id) => this.vehicles.find((vehicle) => vehicle.id === id))
+      .filter((vehicle): vehicle is Vehicle => vehicle !== undefined);
+    const averageTopSpeedMps =
+      fleet.reduce(
+        (sum, vehicle) =>
+          sum + getRollingStockSpec(vehicle.modelId).maxSpeedKph / 3.6,
+        0,
+      ) / Math.max(1, fleet.length);
+    const mode = getTransitModeSpec(line.mode, line.alignment);
+    let oneWaySec = line.stationIds.length * mode.dwellSec;
     for (let i = 1; i < line.stationDist.length; i++) {
-      runSec += runTimeSec(line.stationDist[i] - line.stationDist[i - 1]);
+      const limit = (line.segmentDetails[i - 1]?.speedLimitKph ?? 90) / 3.6;
+      oneWaySec +=
+        runTimeSec(
+          line.stationDist[i] - line.stationDist[i - 1],
+          Math.min(averageTopSpeedMps, limit),
+        ) / mode.speedFactor;
     }
-    const oneWaySec = runSec + line.stationIds.length * DWELL_SEC;
-    const count = Math.max(
-      1,
-      Math.min(16, Math.round((2 * oneWaySec) / line.headwaySec)),
+    const cycleSec =
+      line.direction === "bidirectional"
+        ? oneWaySec * 2
+        : oneWaySec * 1.55;
+    line.headwaySec = Math.max(
+      90,
+      Math.round(cycleSec / Math.max(1, fleet.length)),
     );
-    const last = line.stationIds.length - 1;
-    for (let i = 0; i < count; i++) {
-      const frac = count === 1 ? 0 : i / count;
-      // Unfold the round trip: first half outbound, second half inbound.
-      const along = frac < 0.5 ? frac * 2 : (1 - frac) * 2;
-      const dist = along * line.length;
-      const dir: 1 | -1 = frac < 0.5 ? 1 : -1;
-      // Station at or behind `dist`, so the train sits in hop idx → idx+1.
-      let idx = 0;
-      while (idx < last && line.stationDist[idx + 1] <= dist) idx++;
-      // `atStationIdx` is the stop *behind* the train, which depends on which
-      // way it faces: an outbound train just left idx and is heading for
-      // idx+1, an inbound one just left idx+1 and is heading back to idx.
-      // Clamping keeps the stop it is heading for on the line, so a train
-      // seeded at either end starts by running toward the terminus rather
-      // than pointing off the end of the line.
-      const atStationIdx =
-        dir === 1 ? Math.min(idx, last - 1) : Math.min(idx + 1, last);
-      this.vehicles.push({
-        id: this.nextVehicleId++,
-        lineId: line.id,
-        dist,
-        prevDist: dist,
-        speed: 0, // pulls away from a stand like any other departure
-        dir,
-        state: "running",
-        dwellRemaining: 0,
-        atStationIdx,
-        onboard: [],
-      });
+  }
+
+  private stationNameFor(pos: Vec2, id: number): string {
+    const anchors = [
+      { name: "Central", x: 0, y: 0 },
+      { name: "Midtown", x: 0, y: -2_400 },
+      { name: "Museum District", x: 500, y: -4_400 },
+      { name: "Montrose", x: -3_200, y: -1_000 },
+      { name: "The Heights", x: -2_000, y: 5_000 },
+      { name: "EaDo", x: 2_800, y: -600 },
+      { name: "East End", x: 5_500, y: -1_600 },
+      { name: "Uptown", x: -10_000, y: -1_800 },
+      { name: "Medical Center", x: 1_000, y: -7_000 },
+    ];
+    let nearest = anchors[0];
+    let nearestDistance = Infinity;
+    for (const anchor of anchors) {
+      const distance = Math.hypot(pos.x - anchor.x, pos.y - anchor.y);
+      if (distance < nearestDistance) {
+        nearest = anchor;
+        nearestDistance = distance;
+      }
     }
+    const duplicate = [...this.stations.values()].filter((station) =>
+      station.name.startsWith(nearest.name),
+    ).length;
+    return nearestDistance < 7_500
+      ? `${nearest.name}${duplicate > 0 ? ` ${duplicate + 1}` : ""}`
+      : `Houston ${String(id).padStart(2, "0")}`;
   }
 
   // ── Tick ────────────────────────────────────────────────────────────
@@ -258,22 +594,76 @@ export class Simulation {
       this.kpis.boardingsToday = 0;
       this.kpis.completedTrips = 0;
       this.kpis.unservedTrips = 0;
+      this.economy.fareRevenueToday = 0;
+      this.economy.subsidyToday = 0;
+      this.economy.operatingCostToday = 0;
+      this.economy.energyCostToday = 0;
+      this.economy.maintenanceCostToday = 0;
+      this.economy.netCashflowToday = 0;
+      this.economy.projectedDailyCashflow = 0;
+      this.economyDayStartedAt = this.simTimeSec;
+      this.environment.electricityKwhToday = 0;
+      this.environment.dieselLitersToday = 0;
+      this.environment.emissionsKgToday = 0;
+      for (const station of this.stations.values()) {
+        station.boardingsToday = 0;
+      }
+      for (const line of this.lines.values()) {
+        line.stats.boardingsToday = 0;
+        line.stats.revenueToday = 0;
+        line.stats.energyCostToday = 0;
+        line.stats.maintenanceCostToday = 0;
+        line.stats.energyUsedToday = 0;
+      }
+      for (const vehicle of this.vehicles) {
+        vehicle.distanceTodayM = 0;
+        vehicle.energyUsedToday = 0;
+      }
+      this.traffic.carTripsToday = 0;
+      this.traffic.avoidedCarTripsToday = 0;
     }
 
     this.moveVehicles();
     this.finishWalks();
     this.spawnDemand();
+    this.accrueOperatingCosts();
+    this.trafficAccumulator += SIM_DT;
+    if (this.trafficAccumulator >= 30) {
+      this.trafficAccumulator -= 30;
+      this.recalculateTraffic();
+    }
   }
 
   private moveVehicles(): void {
     for (const v of this.vehicles) {
-      const line = this.lines.get(v.lineId)!;
+      if (v.lineId === null) continue;
+      const line = this.lines.get(v.lineId);
+      if (!line) continue;
+      const modeSpec = getTransitModeSpec(line.mode, line.alignment);
+      const stock = getRollingStockSpec(v.modelId);
       // Where this tick started, so the renderer can interpolate across it
       // (the sim ticks at 4 Hz; the screen refreshes far faster).
       v.prevDist = v.dist;
       if (v.state === "dwelling") {
         v.dwellRemaining -= SIM_DT;
-        if (v.dwellRemaining <= 0) v.state = "running";
+        if (v.dwellRemaining <= 0) {
+          if (
+            line.direction === "one-way" &&
+            v.atStationIdx === line.stationIds.length - 1
+          ) {
+            // A one-way service deadheads back to its origin off-map. The
+            // movement is not rendered, but its energy and maintenance are.
+            this.consumeVehicleEnergy(v, line, line.length * 0.55);
+            v.dist = 0;
+            v.prevDist = 0;
+            v.atStationIdx = 0;
+            v.dir = 1;
+            v.dwellRemaining = modeSpec.dwellSec;
+            this.handleStationStop(v, line);
+          } else {
+            v.state = "running";
+          }
+        }
         continue;
       }
 
@@ -283,7 +673,7 @@ export class Simulation {
         // than just clamping) matters: with no stop ahead there is nothing
         // to advance toward, so a train left pointing outward would sit
         // here forever instead of resuming service.
-        v.dir = v.dir === 1 ? -1 : 1;
+        v.dir = line.direction === "one-way" ? 1 : v.dir === 1 ? -1 : 1;
         v.speed = 0;
         v.dist = Math.max(0, Math.min(line.length, v.dist));
         continue;
@@ -294,8 +684,25 @@ export class Simulation {
       // always ahead, and the hop it belongs to sets the train's top speed.
       const marker = line.stationDist[nextIdx];
       const hopLen = Math.abs(marker - line.stationDist[v.atStationIdx]);
-      v.speed = nextSpeed(v.speed, (marker - v.dist) * v.dir, hopLen);
-      v.dist += v.dir * v.speed * SIM_DT;
+      const segmentIndex = Math.min(v.atStationIdx, nextIdx);
+      const trackLimitMps =
+        (line.segmentDetails[segmentIndex]?.speedLimitKph ?? 90) / 3.6;
+      v.speed = nextSpeed(
+        v.speed,
+        (marker - v.dist) * v.dir,
+        hopLen,
+        Math.min(stock.maxSpeedKph / 3.6, trackLimitMps),
+      );
+      const trafficFactor = Math.max(
+        0.42,
+        1 -
+          modeSpec.congestionExposure *
+            (this.traffic.congestionIndex / 135),
+      );
+      const before = v.dist;
+      v.dist +=
+        v.dir * v.speed * modeSpec.speedFactor * trafficFactor * SIM_DT;
+      this.consumeVehicleEnergy(v, line, Math.abs(v.dist - before));
 
       const arrived = v.dir === 1 ? v.dist >= marker : v.dist <= marker;
       if (arrived) {
@@ -303,9 +710,45 @@ export class Simulation {
         v.speed = 0;
         v.atStationIdx = nextIdx;
         v.state = "dwelling";
-        v.dwellRemaining = DWELL_SEC;
+        v.dwellRemaining = modeSpec.dwellSec;
+        const failureChance =
+          ((100 - v.reliabilityPct) + (100 - v.conditionPct) * 0.15) /
+          25_000;
+        if (this.rng.next() < failureChance) {
+          v.dwellRemaining += 90 + this.rng.next() * 210;
+        }
         this.handleStationStop(v, line);
       }
+    }
+  }
+
+  private consumeVehicleEnergy(
+    vehicle: Vehicle,
+    line: Line,
+    distanceM: number,
+  ): void {
+    if (distanceM <= 0) return;
+    const stock = getRollingStockSpec(vehicle.modelId);
+    const units = (distanceM / 1_000) * stock.energyPerKm;
+    const cost = units * stock.energyCostPerUnit;
+    vehicle.distanceTodayM += distanceM;
+    vehicle.lifetimeDistanceM += distanceM;
+    vehicle.energyUsedToday += units;
+    vehicle.conditionPct = Math.max(
+      45,
+      vehicle.conditionPct - (distanceM / 1_000) * 0.00014,
+    );
+    line.stats.energyUsedToday += units;
+    line.stats.energyCostToday += cost;
+    this.economy.energyCostToday += cost;
+    this.economy.operatingCostToday += cost;
+    this.economy.operatingBalance -= cost;
+    if (stock.energyType === "electricity") {
+      this.environment.electricityKwhToday += units;
+      this.environment.emissionsKgToday += units * 0.36;
+    } else {
+      this.environment.dieselLitersToday += units;
+      this.environment.emissionsKgToday += units * 2.68;
     }
   }
 
@@ -313,6 +756,7 @@ export class Simulation {
   private handleStationStop(v: Vehicle, line: Line): void {
     const stationId = line.stationIds[v.atStationIdx];
     const station = this.stations.get(stationId)!;
+    const capacity = v.capacity;
 
     // 1 · Alight.
     const staying: number[] = [];
@@ -337,7 +781,12 @@ export class Simulation {
     // 2 · Reverse at terminals before boarding, so passengers board the
     //     direction the vehicle will actually depart in.
     if (v.atStationIdx === 0) v.dir = 1;
-    else if (v.atStationIdx === line.stationIds.length - 1) v.dir = -1;
+    else if (
+      v.atStationIdx === line.stationIds.length - 1 &&
+      line.direction === "bidirectional"
+    ) {
+      v.dir = -1;
+    }
 
     // 3 · Board, up to crush capacity; the rest are left behind to wait.
     const stillWaiting: number[] = [];
@@ -348,10 +797,15 @@ export class Simulation {
         leg.lineId === line.id &&
         leg.boardStationId === stationId &&
         leg.dir === v.dir;
-      if (wants && v.onboard.length < TRAIN_CAPACITY) {
+      if (wants && v.onboard.length < capacity) {
         p.phase = "riding";
         v.onboard.push(pid);
         this.kpis.boardingsToday++;
+        station.boardingsToday++;
+        line.stats.boardingsToday++;
+        line.stats.revenueToday += BASE_FARE;
+        this.economy.fareRevenueToday += BASE_FARE;
+        this.economy.operatingBalance += BASE_FARE;
       } else {
         stillWaiting.push(pid);
       }
@@ -372,7 +826,6 @@ export class Simulation {
   }
 
   private spawnDemand(): void {
-    if (this.lines.size === 0) return; // nothing to ride yet
     const hour = Math.floor((this.simTimeSec % DAY_SEC) / 3600);
     const ratePerSec =
       (DAILY_TRIPS * (HOURLY_WEIGHT[hour] / HOURLY_SUM)) / 3600;
@@ -383,15 +836,42 @@ export class Simulation {
     }
   }
 
-  // Gravity-flavoured destination weight: mass × distance deterrence (§4.1.3
-  // in spirit — the real doubly-constrained model arrives in Phase 2).
-  private gravityWeight(origin: Zone, z: Zone, amBound: boolean): number {
-    if (z.id === origin.id) return 0;
-    const d = Math.hypot(
-      z.center.x - origin.center.x,
-      z.center.y - origin.center.y,
-    );
-    return (amBound ? z.jobs : z.pop) * Math.exp(-d / DEST_DETERRENCE_M);
+  /**
+   * Importance-sample a bounded destination set from the population/job
+   * prefix sums, then apply distance deterrence inside that set. This keeps
+   * each trip O(DESTINATION_CANDIDATES) instead of scanning every tract.
+   */
+  private sampleDestination(
+    origin: Zone,
+    amBound: boolean,
+    useLocalPool: boolean,
+  ): Zone | null {
+    const cumulative = useLocalPool
+      ? amBound
+        ? this.cumJobsNear
+        : this.cumPopNear
+      : amBound
+        ? this.cumJobs
+        : this.cumPop;
+    const candidates: Zone[] = [];
+    const weights: number[] = [];
+    for (let i = 0; i < DESTINATION_CANDIDATES; i++) {
+      const sampled = this.sampleZone(cumulative);
+      if (sampled < 0) continue;
+      const zone = useLocalPool
+        ? this.zones[this.nearNetworkZoneIdx[sampled]]
+        : this.zones[sampled];
+      if (zone.id === origin.id) continue;
+      const distance = Math.hypot(
+        zone.center.x - origin.center.x,
+        zone.center.y - origin.center.y,
+      );
+      candidates.push(zone);
+      // Population/jobs already shaped the importance sample.
+      weights.push(Math.exp(-distance / DEST_DETERRENCE_M));
+    }
+    const picked = this.rng.weightedIndex(weights);
+    return picked < 0 ? null : candidates[picked];
   }
 
   /** One person-trip: home→work in the AM half, work→home in the PM half. */
@@ -415,21 +895,12 @@ export class Simulation {
       origin = this.zones[oi];
     }
 
-    let dest: Zone;
-    if (useLocalPool) {
-      const weights = this.nearNetworkZoneIdx.map((zi) =>
-        this.gravityWeight(origin, this.zones[zi], amBound),
-      );
-      const li = this.rng.weightedIndex(weights);
-      if (li < 0) return;
-      dest = this.zones[this.nearNetworkZoneIdx[li]];
-    } else {
-      const weights = this.zones.map((z) =>
-        this.gravityWeight(origin, z, amBound),
-      );
-      const di = this.rng.weightedIndex(weights);
-      if (di < 0) return;
-      dest = this.zones[di];
+    const dest = this.sampleDestination(origin, amBound, useLocalPool);
+    if (!dest) return;
+    if (this.lines.size === 0) {
+      this.kpis.unservedTrips++;
+      this.traffic.carTripsToday++;
+      return;
     }
 
     const cacheKey = `${origin.id}|${dest.id}`;
@@ -450,8 +921,10 @@ export class Simulation {
     }
     if (!cached) {
       this.kpis.unservedTrips++;
+      this.traffic.carTripsToday++;
       return;
     }
+    this.traffic.avoidedCarTripsToday++;
 
     const id = this.nextPassengerId++;
     const p: Passenger = {
@@ -509,6 +982,151 @@ export class Simulation {
     return out.slice(0, 3);
   }
 
+  private recomputeFacilityConnections(): void {
+    let changed = false;
+    for (const facility of this.facilities) {
+      let connected = false;
+      for (const station of this.stations.values()) {
+        if (
+          Math.hypot(
+            station.pos.x - facility.pos.x,
+            station.pos.y - facility.pos.y,
+          ) <= facility.catchmentM
+        ) {
+          connected = true;
+          break;
+        }
+      }
+      if (connected !== facility.connected) {
+        facility.connected = connected;
+        changed = true;
+      }
+    }
+    if (changed) this.mobilityVersion++;
+    this.recalculateTraffic();
+  }
+
+  private accrueOperatingCosts(): void {
+    let maintenanceThisTick = 0;
+    for (const vehicle of this.vehicles) {
+      if (vehicle.lineId === null) continue;
+      const line = this.lines.get(vehicle.lineId);
+      if (!line) continue;
+      const stock = getRollingStockSpec(vehicle.modelId);
+      const hourlyCost =
+        getTransitModeSpec(line.mode, line.alignment)
+          .operatingCostPerVehicleHour + stock.maintenanceCostPerHour;
+      const cost = (hourlyCost * SIM_DT) / 3600;
+      maintenanceThisTick += cost;
+      line.stats.maintenanceCostToday += cost;
+    }
+    for (const line of this.lines.values()) {
+      const infrastructureCost =
+        (((line.constructionCost * 0.015) / (365 * 24)) * SIM_DT) / 3600;
+      maintenanceThisTick += infrastructureCost;
+      line.stats.maintenanceCostToday += infrastructureCost;
+    }
+    for (const facility of this.facilities) {
+      if (!facility.builtIn) {
+        maintenanceThisTick +=
+          (((facility.constructionCost * 0.025) / (365 * 24)) * SIM_DT) /
+          3600;
+      }
+    }
+
+    this.economy.maintenanceCostToday += maintenanceThisTick;
+    this.economy.operatingCostToday += maintenanceThisTick;
+    this.economy.operatingBalance -= maintenanceThisTick;
+
+    const subsidyThisTick = (DAILY_OPERATING_SUBSIDY * SIM_DT) / DAY_SEC;
+    this.economy.subsidyToday += subsidyThisTick;
+    this.economy.operatingBalance += subsidyThisTick;
+    this.economy.netCashflowToday =
+      this.economy.fareRevenueToday +
+      this.economy.subsidyToday -
+      this.economy.operatingCostToday;
+    const elapsed = Math.max(300, this.simTimeSec - this.economyDayStartedAt);
+    this.economy.projectedDailyCashflow =
+      (this.economy.netCashflowToday / elapsed) * DAY_SEC;
+  }
+
+  private recalculateEnvironment(): void {
+    let totalLength = 0;
+    let weightedNoise = 0;
+    let demolitions = 0;
+    for (const line of this.lines.values()) {
+      for (const detail of line.segmentDetails) {
+        totalLength += detail.lengthM;
+        weightedNoise += detail.lengthM * detail.noiseDb;
+        demolitions += detail.demolishedBuildings;
+      }
+    }
+    const trackNoise = totalLength > 0 ? weightedNoise / totalLength : 28;
+    const activeFleet = this.vehicles.filter(
+      (vehicle) => vehicle.lineId !== null,
+    );
+    const fleetNoise =
+      activeFleet.length > 0
+        ? activeFleet.reduce((sum, vehicle) => sum + vehicle.noiseDb, 0) /
+          activeFleet.length
+        : 0;
+    const combinedNoise =
+      activeFleet.length > 0 ? trackNoise * 0.72 + fleetNoise * 0.28 : trackNoise;
+    this.environment.networkNoiseIndex = Math.round(
+      Math.max(0, Math.min(100, ((combinedNoise - 28) / 62) * 100)),
+    );
+    this.environment.residentsExposedToNoise = Math.round(
+      (totalLength / 1_000) * Math.max(0, combinedNoise - 48) * 72,
+    );
+    this.environment.demolishedBuildings = demolitions;
+  }
+
+  private recalculateTraffic(): void {
+    const totalTrips =
+      this.traffic.carTripsToday + this.traffic.avoidedCarTripsToday;
+    const share =
+      totalTrips > 0 ? this.traffic.avoidedCarTripsToday / totalTrips : 0;
+    const connectedFacilities = this.facilities.filter(
+      (facility) => facility.connected,
+    );
+    const facilityRelief = Math.min(
+      0.28,
+      connectedFacilities.reduce(
+        (sum, facility) => sum + facility.trafficRelief,
+        0,
+      ),
+    );
+    const outsideFacilities = this.facilities.filter(
+      (facility) => facility.connectsOutside,
+    );
+    const outsideCapacity = outsideFacilities.reduce(
+      (sum, facility) => sum + facility.dailyCapacity,
+      0,
+    );
+    const unconnectedOutsideCapacity = outsideFacilities.reduce(
+      (sum, facility) =>
+        sum + (facility.connected ? 0 : facility.dailyCapacity),
+      0,
+    );
+    const gatewayPressure =
+      outsideCapacity > 0
+        ? (unconnectedOutsideCapacity / outsideCapacity) * 12
+        : 0;
+    const hour = Math.floor((this.simTimeSec % DAY_SEC) / 3600);
+    const peak = HOURLY_WEIGHT[hour] / PEAK_HOURLY_WEIGHT;
+    const unconstrained = 48 + peak * 48 + gatewayPressure;
+    this.traffic.transitShare = share;
+    this.traffic.connectedGateways = connectedFacilities.filter(
+      (facility) => facility.connectsOutside,
+    ).length;
+    this.traffic.congestionIndex = Math.round(
+      Math.max(
+        12,
+        Math.min(100, unconstrained * (1 - share * 0.58 - facilityRelief)),
+      ),
+    );
+  }
+
   // ── Read-only view for render/UI ────────────────────────────────────
 
   snapshot(): SimSnapshot {
@@ -521,6 +1139,11 @@ export class Simulation {
       lines: this.lines,
       vehicles: this.vehicles,
       passengers: this.passengers,
+      facilities: this.facilities,
+      mobilityVersion: this.mobilityVersion,
+      economy: this.economy,
+      environment: this.environment,
+      traffic: this.traffic,
       kpis: this.kpis,
     };
   }

@@ -21,9 +21,12 @@
 import { SIM_DT, TRAIN_FULL_SPEED_DIST, TRAIN_MAX_SPEED } from "./constants";
 
 /** Speed (m/s) a train reaches at the midpoint of a `hopLen` metre hop. */
-function peakSpeed(hopLen: number): number {
+function peakSpeed(
+  hopLen: number,
+  maxSpeedMps = TRAIN_MAX_SPEED,
+): number {
   if (hopLen <= 0) return 0;
-  return TRAIN_MAX_SPEED * Math.min(1, Math.sqrt(hopLen / TRAIN_FULL_SPEED_DIST));
+  return maxSpeedMps * Math.min(1, Math.sqrt(hopLen / TRAIN_FULL_SPEED_DIST));
 }
 
 /**
@@ -32,9 +35,9 @@ function peakSpeed(hopLen: number): number {
  * peak at the midpoint. Constant below TRAIN_FULL_SPEED_DIST, then eases off
  * as longer hops stretch the same top speed over a longer ramp.
  */
-function hopAccel(hopLen: number): number {
+function hopAccel(hopLen: number, maxSpeedMps = TRAIN_MAX_SPEED): number {
   if (hopLen <= 0) return 0;
-  const peak = peakSpeed(hopLen);
+  const peak = peakSpeed(hopLen, maxSpeedMps);
   return (peak * peak) / hopLen;
 }
 
@@ -50,10 +53,11 @@ export function nextSpeed(
   speed: number,
   distToStop: number,
   hopLen: number,
+  maxSpeedMps = TRAIN_MAX_SPEED,
 ): number {
-  const accel = hopAccel(hopLen);
+  const accel = hopAccel(hopLen, maxSpeedMps);
   const brakeCap = Math.sqrt(2 * accel * Math.max(0, distToStop));
-  const target = Math.min(peakSpeed(hopLen), brakeCap);
+  const target = Math.min(peakSpeed(hopLen, maxSpeedMps), brakeCap);
   return speed > target
     ? Math.max(target, speed - accel * SIM_DT)
     : Math.min(target, speed + accel * SIM_DT);
@@ -63,7 +67,10 @@ export function nextSpeed(
  * Time (s) to run one interstation hop of `hopLen` metres, stand to stand,
  * excluding the dwell at either end. A triangle averages half its peak.
  */
-export function runTimeSec(hopLen: number): number {
+export function runTimeSec(
+  hopLen: number,
+  maxSpeedMps = TRAIN_MAX_SPEED,
+): number {
   if (hopLen <= 0) return 0;
-  return (2 * hopLen) / peakSpeed(hopLen);
+  return (2 * hopLen) / peakSpeed(hopLen, maxSpeedMps);
 }

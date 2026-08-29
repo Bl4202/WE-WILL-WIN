@@ -1,0 +1,17 @@
+{
+  "steps": [
+    { "buttons": [], "frames": 120 },
+    { "buttons": ["left_mouse_button"], "frames": 2, "mouse_x": 515, "mouse_y": 470 },
+    { "buttons": [], "frames": 4 },
+    { "buttons": ["left_mouse_button"], "frames": 2, "mouse_x": 690, "mouse_y": 360 },
+    { "buttons": [], "frames": 5 },
+    { "buttons": ["enter"], "frames": 2 },
+    { "buttons": [], "frames": 8 },
+    { "buttons": ["left_mouse_button"], "frames": 2, "mouse_x": 127, "mouse_y": 641 },
+    { "buttons": [], "frames": 10 },
+    { "buttons": ["left_mouse_button"], "frames": 2, "mouse_x": 170, "mouse_y": 480 },
+    { "buttons": [], "frames": 10 },
+    { "buttons": ["left_mouse_button"], "frames": 2, "mouse_x": 275, "mouse_y": 279 },
+    { "buttons": [], "frames": 60 }
+  ]
+}
