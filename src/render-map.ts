@@ -224,6 +224,14 @@ export interface BuildTarget extends LinePoint {
 /** Web Mercator ground resolution (metres/pixel) at this latitude/zoom —
  *  used to offset parallel track segments by a constant number of *screen*
  *  pixels regardless of how far the player has zoomed. */
+/**
+ * Padding on the world-space road-snap pre-filter. A tilted camera makes the
+ * screen-pixel:metre ratio vary widely across the viewport, so the cheap
+ * rejection radius is scaled up rather than computed exactly — it only has to
+ * never discard a road the precise screen-space test would have matched.
+ */
+const ROAD_SNAP_REJECT_FACTOR = 6;
+
 function metersPerPixel(latDeg: number, zoom: number): number {
   return (156543.03392 * Math.cos((latDeg * Math.PI) / 180)) / 2 ** zoom;
 }
@@ -426,6 +434,9 @@ export class MapRenderer {
   private cachedRoadLayersKey = "";
   private geometryViewportKey = "";
   private demolitionFilterKey = "";
+  /** networkVersion the demolition filter was last computed for; the set
+   *  only changes when the network does. */
+  private demolitionFilterVersion = -1;
 
   constructor(
     container: HTMLElement,
@@ -477,6 +488,7 @@ export class MapRenderer {
     this.geometryViewportKey = "";
     this.cachedRoadLayers = null;
     this.demolitionFilterKey = "";
+    this.demolitionFilterVersion = -1;
     this.map.setStyle(BASEMAP_STYLES[theme]);
     this.map.once("style.load", () => {
       this.ensureBuildingsLayer();
@@ -1061,7 +1073,33 @@ export class MapRenderer {
   } | null {
     let closest: { pos: Vec2; nodeKey: string } | null = null;
     let closestDistance = maxDistancePx;
+
+    // World-space pre-rejection. The exact test below is in screen space and
+    // costs two toLngLat + two map.project per segment — at ~14k roads that
+    // was tens of thousands of matrix transforms on every mousemove. Roads
+    // nowhere near the cursor are rejected here in plain metres first.
+    //
+    // Conservative by construction: the radius is padded generously because
+    // pitch makes the px→metre ratio vary across the viewport, so anything
+    // the exact test could still match survives the filter.
+    const cursorGeo = this.map.unproject([screen.x, screen.y]);
+    const cursorWorld = this.toWorld(cursorGeo.lat, cursorGeo.lng);
+    const metresPerPx = metersPerPixel(cursorGeo.lat, this.map.getZoom());
+    const rejectRadius = maxDistancePx * metresPerPx * ROAD_SNAP_REJECT_FACTOR;
+    const rejectRadiusSq = rejectRadius * rejectRadius;
+
     for (const road of this.roadModels) {
+      let near = false;
+      for (const point of road.points) {
+        const dx = point.x - cursorWorld.x;
+        const dy = point.y - cursorWorld.y;
+        if (dx * dx + dy * dy <= rejectRadiusSq) {
+          near = true;
+          break;
+        }
+      }
+      if (!near) continue;
+
       for (let index = 1; index < road.points.length; index++) {
         const aGeo = this.toLngLat(road.points[index - 1]);
         const bGeo = this.toLngLat(road.points[index]);
@@ -1201,15 +1239,23 @@ export class MapRenderer {
 
   private updateDemolishedBuildingFilter(snap: SimSnapshot): void {
     if (!this.map.getLayer(BUILDINGS_LAYER_ID)) return;
-    const ids = [...snap.lines.values()]
-      .flatMap((line) =>
-        line.segmentDetails.flatMap(
-          (detail) => detail.demolishedBuildingFeatureIds,
+    // This runs every frame, but the demolished set only changes when the
+    // network does. Checking the version first keeps the flatten + dedupe +
+    // sort + join off the hot path; previously all of it ran 60×/s just to
+    // rediscover an unchanged key. (Set dedupe rather than the old
+    // findIndex scan, which was quadratic in the demolition count.)
+    if (snap.networkVersion === this.demolitionFilterVersion) return;
+    this.demolitionFilterVersion = snap.networkVersion;
+
+    const ids = [
+      ...new Set(
+        [...snap.lines.values()].flatMap((line) =>
+          line.segmentDetails.flatMap(
+            (detail) => detail.demolishedBuildingFeatureIds,
+          ),
         ),
-      )
-      .filter(
-        (id, index, values) => values.findIndex((value) => value === id) === index,
-      );
+      ),
+    ];
     const key = ids.map(String).sort().join("|");
     if (key === this.demolitionFilterKey) return;
     this.demolitionFilterKey = key;

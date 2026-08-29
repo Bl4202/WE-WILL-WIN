@@ -496,14 +496,7 @@ export class Simulation {
     const line = this.lines.get(vehicle.lineId);
     if (!line) return false;
     const station = this.stations.get(line.stationIds[vehicle.atStationIdx]);
-    if (station) {
-      for (const passengerId of vehicle.onboard) {
-        const passenger = this.passengers.get(passengerId);
-        if (!passenger) continue;
-        passenger.phase = "waiting";
-        station.waiting.push(passengerId);
-      }
-    }
+    const strandedIds = vehicle.onboard.slice();
     vehicle.onboard = [];
     line.vehicleIds = line.vehicleIds.filter((id) => id !== vehicle.id);
     vehicle.lineId = null;
@@ -516,9 +509,59 @@ export class Simulation {
     this.updateLineHeadway(line);
     this.planner.rebuild(this.lines, this.stations);
     this.planCache.clear();
+    // Rebuild the planner BEFORE re-routing the people this vehicle was
+    // carrying, so they are re-planned against the network as it now is —
+    // without their old line if that was its last vehicle.
+    this.rerouteStranded(strandedIds, station);
     this.recalculateEnvironment();
     this.networkVersion++;
     return true;
+  }
+
+  /**
+   * Re-plan passengers put off a vehicle mid-journey.
+   *
+   * Dropping them at a platform still holding legs on the line they were
+   * just removed from leaves them waiting for a train that may never come:
+   * they never alight, never complete, and never leave `this.passengers` —
+   * an unbounded leak that also permanently inflates the active-passenger
+   * count. Their final destination is the last leg's alighting station, so
+   * the remainder of the journey is re-planned from where they now stand.
+   * Anyone the network can no longer serve is dropped and counted unserved,
+   * which is what the KPI means.
+   */
+  private rerouteStranded(
+    passengerIds: number[],
+    station: Station | undefined,
+  ): void {
+    for (const passengerId of passengerIds) {
+      const passenger = this.passengers.get(passengerId);
+      if (!passenger) continue;
+      const finalLeg = passenger.legs[passenger.legs.length - 1];
+      const destinationId = finalLeg?.alightStationId;
+
+      if (station && destinationId !== undefined) {
+        if (destinationId === station.id) {
+          this.passengers.delete(passengerId);
+          this.kpis.completedTrips++;
+          continue;
+        }
+        const replanned = this.planner.plan(
+          [{ stationId: station.id, walkSec: 0 }],
+          [{ stationId: destinationId, walkSec: 0 }],
+          this.lines,
+        );
+        if (replanned) {
+          passenger.legs = replanned.legs;
+          passenger.legIndex = 0;
+          passenger.phase = "waiting";
+          station.waiting.push(passengerId);
+          continue;
+        }
+      }
+      this.passengers.delete(passengerId);
+      this.kpis.unservedTrips++;
+    }
   }
 
   private updateLineHeadway(line: Line): void {
@@ -896,7 +939,15 @@ export class Simulation {
     }
 
     const dest = this.sampleDestination(origin, amBound, useLocalPool);
-    if (!dest) return;
+    if (!dest) {
+      // Every one of the bounded importance samples landed back on the
+      // origin zone — likeliest when the near-network pool is tiny. The
+      // trip was still generated, so it has to be counted: returning
+      // silently here made transit share read optimistically high.
+      this.kpis.unservedTrips++;
+      this.traffic.carTripsToday++;
+      return;
+    }
     if (this.lines.size === 0) {
       this.kpis.unservedTrips++;
       this.traffic.carTripsToday++;

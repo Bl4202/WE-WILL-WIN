@@ -914,7 +914,7 @@ export class Ui {
       .querySelector('meta[name="theme-color"]')
       ?.setAttribute(
         "content",
-        theme === "light" ? "#eef4f5" : "#071116",
+        theme === "light" ? "#ffffff" : "#000000",
       );
     this.renderer.setTheme(theme);
     if (persist) savePreferences(this.preferences);

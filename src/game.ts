@@ -73,7 +73,13 @@ export class Game {
   }
 
   private loop = (nowMs: number): void => {
-    const controlledByTestHarness = "__vt_pending" in window;
+    // The QA harness drives time through advanceTime() instead of the frame
+    // clock, so the loop must not also advance it. Dev-only: sniffing a bare
+    // global in production means any extension or third-party script that
+    // happens to define `__vt_pending` silently freezes the simulation —
+    // rAF keeps rendering, the sim never ticks, and nothing reports why.
+    const controlledByTestHarness =
+      import.meta.env.DEV && "__vt_pending" in window;
     const dtReal = controlledByTestHarness
       ? 0
       : Math.min((nowMs - this.lastFrameMs) / 1000, 0.25);

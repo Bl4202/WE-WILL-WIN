@@ -1,4 +1,3 @@
-@import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Inter:wght@400;500;600;700;800&display=swap");
 
 :root {
   color-scheme: dark;
@@ -2148,4 +2147,200 @@ body[data-theme="light"] #bottom-bar {
   .clock-cluster {
     min-width: 260px;
   }
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+ * Visual reconciliation pass.
+ *
+ * The reference-match pass above moved the chrome most of the way back
+ * from its first-pass teal language, but stopped at a neutral dark grey
+ * with soft 5px corners. This pass finishes the trip to the project's
+ * own visual system (style.md): pure black, hairline white rules, flat
+ * surfaces, and hard square edges.
+ *
+ * Deliberately NOT reverted here, because they are behaviour rather than
+ * appearance: the mode-switched contextual panel, the bottom operations
+ * bar, and the settings/keybind dialog.
+ * ──────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* Pure black ground; the map is the page, chrome floats over it. */
+  --bg: #000;
+  --panel: rgba(0, 0, 0, 0.66);
+  --panel-solid: #000;
+  --panel-raised: rgba(0, 0, 0, 0.82);
+  --panel-soft: rgba(255, 255, 255, 0.06);
+  --panel-hover: rgba(255, 255, 255, 0.12);
+  --border: rgba(255, 255, 255, 0.22);
+  --border-strong: rgba(255, 255, 255, 0.38);
+  --text: #fff;
+  --text-soft: rgba(255, 255, 255, 0.75);
+  --muted: rgba(255, 255, 255, 0.55);
+  --faint: rgba(255, 255, 255, 0.38);
+  --accent: #fff;
+  --accent-strong: #fff;
+  --accent-wash: rgba(255, 255, 255, 0.1);
+  --blue: rgba(255, 255, 255, 0.75);
+
+  /* The reference-match pass never re-declared these four, so they were
+   * still carrying first-pass mint/coral. Re-tuned to the muted KPI
+   * family below rather than left saturated. */
+  --amber: #c2703a;
+  --red: #b2545a;
+  --positive: #3f8f5f;
+  --negative: #b2545a;
+
+  /* Restored from the original Glance strip — the four KPI hues. */
+  --accent-boardings: #b23a72;
+  --accent-waiting: #3b6fa0;
+  --accent-completed: #3f8f5f;
+  --accent-unserved: #c2703a;
+
+  --shadow: none;
+  --radius: 0;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+body[data-theme="light"] {
+  --bg: #fff;
+  --panel: rgba(255, 255, 255, 0.82);
+  --panel-solid: #fff;
+  --panel-raised: rgba(255, 255, 255, 0.94);
+  --panel-soft: rgba(0, 0, 0, 0.05);
+  --panel-hover: rgba(0, 0, 0, 0.1);
+  --border: rgba(0, 0, 0, 0.22);
+  --border-strong: rgba(0, 0, 0, 0.4);
+  --text: #000;
+  --text-soft: rgba(0, 0, 0, 0.75);
+  --muted: rgba(0, 0, 0, 0.55);
+  --faint: rgba(0, 0, 0, 0.38);
+  --accent: #000;
+  --accent-strong: #000;
+  --accent-wash: rgba(0, 0, 0, 0.08);
+  --blue: rgba(0, 0, 0, 0.7);
+  --shadow: none;
+}
+
+/* ── Square edges ──────────────────────────────────────────────────
+ * The original UI carried zero border-radius declarations; the overhaul
+ * introduced 65. Reset globally, then re-exempt the controls that are
+ * genuinely circular (round icon buttons and status dots), which read as
+ * icons rather than chrome and were kept by explicit decision. */
+/* !important is load-bearing here, not laziness: a bare `*` selector has
+ * zero specificity and loses to every one of the ~65 class-scoped radius
+ * rules above it, regardless of source order. Forcing it is what makes
+ * this a single reversible block instead of 65 scattered edits. The
+ * circle exemption below re-wins on specificity among !important rules. */
+*,
+*::before,
+*::after {
+  border-radius: 0 !important;
+}
+
+.mode-btn,
+.round-map-btn,
+.live-chip i,
+.switch i,
+.hint-dot {
+  border-radius: 50% !important;
+}
+
+/* ── Flat surfaces ─────────────────────────────────────────────────
+ * Was: 20 box-shadows and blur(15–24px) saturate(130–140%) frosting.
+ * The original used no shadows and a single blur(2px) — the map should
+ * read through the chrome, not be smeared behind it. */
+/* Same specificity story as the radius reset. Safe for accessibility:
+ * focus indication uses `outline`, not box-shadow (style.css:93). */
+*,
+*::before,
+*::after {
+  box-shadow: none !important;
+}
+
+.context-panel,
+.focus-panel,
+.loading-shell,
+#bottom-bar,
+#top-controls,
+.top-control,
+#settings-dialog,
+.round-map-btn,
+.mode-btn,
+#time-controls,
+.bottom-stat {
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+
+/* ── Typography ────────────────────────────────────────────────────
+ * Back to the system stack (the Google Fonts @import is removed, so
+ * Inter/DM Mono would silently fall back anyway). Numeric columns get
+ * tabular figures rather than a second typeface. */
+:root {
+  font-family: "Segoe UI", system-ui, sans-serif;
+}
+
+body,
+button,
+input,
+select,
+textarea {
+  font-family: "Segoe UI", system-ui, sans-serif;
+}
+
+#clock,
+#kpi-boardings strong,
+.metric-grid strong,
+.bottom-stat strong,
+.estimate-total,
+.estimate-grid strong,
+.detail-row strong,
+.fleet-specs,
+.depth-value,
+#time-controls button,
+.keybind-row button,
+.count-chip,
+.pool-badge {
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The overhaul dropped the type floor to 7px. Back up to a legible 10. */
+.fleet-specs small,
+.panel-note,
+.stat-sub,
+.metric-grid small,
+.mini-label {
+  font-size: 10px;
+}
+
+/* ── KPI accents ───────────────────────────────────────────────────
+ * Targeted by id, so no markup change is needed. */
+#kpi-boardings strong {
+  color: var(--accent-boardings);
+}
+#stat-waiting {
+  color: var(--accent-waiting);
+}
+#stat-completed {
+  color: var(--accent-completed);
+}
+#stat-unserved {
+  color: var(--accent-unserved);
+}
+
+/* ── Residual gradients ────────────────────────────────────────────
+ * Flat fills only; the loading shell had a first-pass teal radial. */
+#loading {
+  background: #000;
+}
+
+.loading-shell {
+  background: rgba(0, 0, 0, 0.82);
+  border-color: var(--border);
+}
+
+.loading-mark span,
+.loading-track span {
+  background: #fff;
 }
