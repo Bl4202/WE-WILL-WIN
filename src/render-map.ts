@@ -174,18 +174,14 @@ interface DemolitionSite {
 }
 
 interface RoadModel {
+  /** Projected metres, used for cursor snapping. */
   points: Vec2[];
-  shadowPath: [number, number, number][];
-  topPath: [number, number, number][];
+  /** Raw lng/lat, fed straight to the GeoJSON source. */
+  line: [number, number][];
   roadClass: string;
+  /** Slip road / interchange ramp, per the tiles' own `ramp` flag. */
+  isRamp: boolean;
   widthM: number;
-  heightM: number;
-}
-
-interface RoadDeckSegment {
-  polygon: [number, number][];
-  roadClass: string;
-  heightM: number;
 }
 
 interface RoadNode {
@@ -195,6 +191,10 @@ interface RoadNode {
 
 interface BuildingFootprint {
   featureId?: string | number;
+  /** Extruded height in metres, matching the basemap's render_height. */
+  heightM: number;
+  /** Tagged hide_3d: real enough to demolish, but never drawn as a solid. */
+  hide3d: boolean;
   ring: [number, number][];
   minLng: number;
   minLat: number;
@@ -286,7 +286,14 @@ function buildingOuterRings(
   return [];
 }
 
-function roadWidthM(roadClass: string): number {
+function roadWidthM(roadClass: string, isRamp: boolean): number {
+  // A freeway ramp carries class=motorway in the tiles, so without this it was
+  // drawn at the mainline's full 19 m. At an interchange that fused every ramp
+  // into one continuous slab — 220 of the 390 motorway features around the
+  // I-45 junction are ramps.
+  if (isRamp) {
+    return roadClass === "motorway" || roadClass === "trunk" ? 8 : 6.5;
+  }
   if (roadClass === "motorway") return 19;
   if (roadClass === "trunk") return 16;
   if (roadClass === "primary") return 13;
@@ -296,17 +303,69 @@ function roadWidthM(roadClass: string): number {
   return 7;
 }
 
-function roadHeightM(roadClass: string): number {
-  if (roadClass === "motorway") return 8.5;
-  if (roadClass === "trunk") return 6.8;
-  if (roadClass === "primary") return 2.1;
-  if (roadClass === "secondary") return 1.45;
-  if (roadClass === "tertiary") return 1.05;
-  return 0.82;
-}
+const ROAD_SOURCE_ID = "game-road-structures";
+const ROAD_LAYER_SHADOW = "game-road-shadow";
+const ROAD_LAYER_EDGE = "game-road-edge";
+const ROAD_LAYER_SURFACE = "game-road-surface";
+const ROAD_LAYER_STRIPE = "game-road-stripe";
+const ROAD_LAYER_IDS = [
+  ROAD_LAYER_SHADOW,
+  ROAD_LAYER_EDGE,
+  ROAD_LAYER_SURFACE,
+  ROAD_LAYER_STRIPE,
+];
+
+/** Classes that carry a painted centre line. */
+const ARTERY_CLASSES = new Set(["motorway", "trunk", "primary", "secondary"]);
+
+/**
+ * Pixels per metre at z10 and z22, at Houston's latitude.
+ *
+ * MapLibre line widths are in screen pixels, but these are real carriageways
+ * and have to hold their ground width.
+ *
+ * Note the 512. MapLibre's world is `512 * 2^zoom` pixels across, so the
+ * familiar `156543.03392 / 2^zoom` metres-per-pixel constant — which assumes
+ * 256 px tiles — is exactly twice the real value here. Using it rendered every
+ * carriageway at half width, which also let the basemap's own wider casings
+ * show out from under them as heavy dark halos.
+ *
+ * Mercator pixel size halves every zoom level, so an `exponential` base-2
+ * interpolation between two anchors whose outputs differ by exactly 2^(z2-z1)
+ * is metre-exact everywhere between them — hence 4096x across these twelve.
+ */
+const EARTH_CIRCUMFERENCE_M = 40075016.686;
+const ROAD_PX_PER_M_Z10 =
+  (512 * 2 ** 10) /
+  (EARTH_CIRCUMFERENCE_M * Math.cos((29.76 * Math.PI) / 180));
+const ROAD_PX_PER_M_Z22 = ROAD_PX_PER_M_Z10 * 4096;
+
+/**
+ * Below these zooms a road class is not worth extruding. A residential street
+ * at z12 is a sub-pixel sliver, but there are tens of thousands of them: the
+ * tile source yields 34,285 road features at z11 against 2,074 at z17, and
+ * every one of them used to be turned into deck geometry on the main thread.
+ */
+const ROAD_CLASS_MIN_ZOOM: Record<string, number> = {
+  motorway: 0,
+  trunk: 0,
+  primary: 11,
+  secondary: 12.5,
+  tertiary: 13.5,
+  minor: 14.5,
+  street: 14.5,
+  street_limited: 14.5,
+  residential: 14.5,
+  unclassified: 14.5,
+  living_street: 15,
+  service: 15.5,
+};
 
 function roadNodeKey(lng: number, lat: number): string {
-  return `${lng.toFixed(6)},${lat.toFixed(6)}`;
+  // Quantised to the same 1e-6 grid toFixed(6) produced, but without the
+  // number-to-string formatter: this runs twice per road segment, which is
+  // tens of thousands of calls on every extraction.
+  return `${Math.round(lng * 1e6)},${Math.round(lat * 1e6)}`;
 }
 
 function orientation(
@@ -426,12 +485,13 @@ export class MapRenderer {
   private cachedMobility: Layer[] | null = null;
   private cachedMobilityKey = "";
   private roadModels: RoadModel[] = [];
-  private roadDeckSegments: RoadDeckSegment[] = [];
   private roadNodes = new Map<string, RoadNode>();
   private buildingFootprints: BuildingFootprint[] = [];
   private roadGeometryRevision = 0;
-  private cachedRoadLayers: Layer[] | null = null;
-  private cachedRoadLayersKey = "";
+  /** Revision last pushed to the GeoJSON source. */
+  private roadDataRevision = -1;
+  private roadStripeStyleKey = "";
+  private roadLayersVisible: boolean | null = null;
   private geometryViewportKey = "";
   private demolitionFilterKey = "";
   /** networkVersion the demolition filter was last computed for; the set
@@ -470,11 +530,19 @@ export class MapRenderer {
       this.map.touchZoomRotate.disableRotation();
       this.map.keyboard.disableRotation();
     }
+    // One overlay, holding the transit network only. It is non-interleaved, so
+    // it draws in its own pass over the finished map frame and lines, trains
+    // and stations stay legible above the city — which is what we want for
+    // them, and exactly what we do not want for the roads. Those live in
+    // MapLibre itself (see ensureRoadStructureLayers) so that the basemap's own
+    // labels and icons can draw on top of them.
     this.overlay = new MapboxOverlay({ interleaved: false, layers: [] });
     this.map.addControl(this.overlay as unknown as maplibregl.IControl);
     this.map.on("load", () => {
       this.ensureBuildingsLayer();
+      this.ensureRoadStructureLayers();
       this.ensureTrafficLayers();
+      this.declutterRoadLabels();
     });
     this.map.on("idle", this.refreshWorldGeometry);
   }
@@ -486,13 +554,19 @@ export class MapRenderer {
     this.cachedNetworkKey = "";
     this.cachedMobilityKey = "";
     this.geometryViewportKey = "";
-    this.cachedRoadLayers = null;
     this.demolitionFilterKey = "";
     this.demolitionFilterVersion = -1;
+    // setStyle drops every layer and source we added, so the road layers are
+    // rebuilt from scratch below and their cached state has to go with them.
+    this.roadDataRevision = -1;
+    this.roadStripeStyleKey = "";
+    this.roadLayersVisible = null;
     this.map.setStyle(BASEMAP_STYLES[theme]);
     this.map.once("style.load", () => {
       this.ensureBuildingsLayer();
+      this.ensureRoadStructureLayers();
       this.ensureTrafficLayers();
+      this.declutterRoadLabels();
       this.map.once("idle", this.refreshWorldGeometry);
     });
   }
@@ -504,13 +578,11 @@ export class MapRenderer {
 
   get geometryStats(): {
     roads: number;
-    roadDecks: number;
     roadNodes: number;
     buildings: number;
   } {
     return {
       roads: this.roadModels.length,
-      roadDecks: this.roadDeckSegments.length,
       roadNodes: this.roadNodes.size,
       buildings: this.buildingFootprints.length,
     };
@@ -525,7 +597,7 @@ export class MapRenderer {
   set3dMode(enabled: boolean): void {
     if (enabled === this.threeDimensional) return;
     this.threeDimensional = enabled;
-    this.cachedRoadLayers = null;
+    this.syncRoadStructureVisibility();
 
     if (this.map.isStyleLoaded()) this.ensureBuildingsLayer();
 
@@ -563,20 +635,80 @@ export class MapRenderer {
     });
   }
 
+  /**
+   * Anchor for layers painted onto the roadway: above the last road line,
+   * below the first label that sits over it.
+   *
+   * Deliberately *not* "the first symbol layer in the style". The two
+   * OpenFreeMap styles order their layers completely differently — `bright`
+   * puts its first symbol at index 94, after all 57 road layers, while `dark`
+   * puts a `water_name` label at index 8, *before* all 15 of its roads and
+   * before its flat `building` fill. Anchoring to the first symbol therefore
+   * worked in light mode and silently buried our layers underneath every road,
+   * and underneath an opaque rgb(10,10,10) building fill, in dark mode.
+   */
+  private roadLabelAnchorId(): string | undefined {
+    const layers = this.map.getStyle().layers;
+    let lastRoadLayer = -1;
+    for (let index = 0; index < layers.length; index++) {
+      const layer = layers[index];
+      if (
+        layer.type === "line" &&
+        "source-layer" in layer &&
+        layer["source-layer"] === "transportation"
+      ) {
+        lastRoadLayer = index;
+      }
+    }
+    for (let index = lastRoadLayer + 1; index < layers.length; index++) {
+      if (layers[index].type === "symbol") return layers[index].id;
+    }
+    return undefined;
+  }
+
+  /**
+   * Anchor for the 3D extrusions: above every street-level label, below the
+   * place names.
+   *
+   * Street labels are painted flat on the ground — road names, shields,
+   * one-way arrows, POI pins — so leaving them above the extrusions made
+   * street names read straight through the middle of a tower. Both styles
+   * order these the same way (dark 32-33, bright 94-108), and in both the
+   * first `place` layer is the boundary: everything before it is street
+   * furniture that belongs behind the geometry, everything from it on is a
+   * neighbourhood, city or state name that has to stay legible over downtown.
+   */
+  private buildingAnchorId(): string | undefined {
+    for (const layer of this.map.getStyle().layers) {
+      if (
+        layer.type === "symbol" &&
+        "source-layer" in layer &&
+        layer["source-layer"] === "place"
+      ) {
+        return layer.id;
+      }
+    }
+    return undefined;
+  }
+
   private ensureBuildingsLayer(): void {
     if (this.map.getLayer(BUILDINGS_LAYER_ID)) {
       this.setBuildingsVisibility(this.threeDimensional ? "visible" : "none");
       return;
     }
 
-    // Keep road/place labels above the extrusions so the city stays usable.
-    const firstSymbolLayer = this.map
-      .getStyle()
-      .layers.find((layer) => layer.type === "symbol")?.id;
+    // Place names stay above the extrusions, street furniture goes behind
+    // them — see buildingAnchorId.
+    const labelAnchor = this.buildingAnchorId();
+    // The low steps stay deliberately close to the basemap so Houston's
+    // low-rise sprawl reads as texture rather than as thousands of blocks.
+    // The tall steps climb hard on purpose: downtown towers have to sit well
+    // clear of the dark basemap's rgb(12,12,12) ground, or their shaded walls
+    // sink into it and the whole mass reads as see-through.
     const buildingColors =
       this.theme === "light"
-        ? ["#ededed", "#dddddd", "#c9c9c9", "#aeaeae"]
-        : ["#1d1d1d", "#292929", "#3b3b3b", "#686868"];
+        ? ["#ededed", "#dcdcdc", "#c2c2c6", "#a2a2ab", "#83838f"]
+        : ["#1f1f23", "#2b2b32", "#3f3f4a", "#565664", "#727284"];
 
     this.map.addLayer(
       {
@@ -600,8 +732,10 @@ export class MapRenderer {
             buildingColors[1],
             110,
             buildingColors[2],
-            260,
+            180,
             buildingColors[3],
+            300,
+            buildingColors[4],
           ],
           "fill-extrusion-height": [
             "interpolate",
@@ -621,11 +755,16 @@ export class MapRenderer {
             14,
             ["coalesce", ["get", "render_min_height"], 0],
           ],
-          "fill-extrusion-opacity": 0.93,
+          // Fully opaque, and it has to stay here: at 0.93 the basemap
+          // roadway underneath bled through the towers, which read as roads
+          // clipping through the geometry. This is already the maximum — a
+          // tower that still looks see-through is a layer-order or contrast
+          // problem, not an opacity one.
+          "fill-extrusion-opacity": 1,
           "fill-extrusion-vertical-gradient": true,
         },
       },
-      firstSymbolLayer,
+      labelAnchor,
     );
   }
 
@@ -667,9 +806,17 @@ export class MapRenderer {
       }
     }
 
-    const firstSymbolLayer = this.map
-      .getStyle()
-      .layers.find((layer) => layer.type === "symbol")?.id;
+    // Below the game's own road decks, which is where this has always
+    // effectively sat: as deck.gl geometry the decks were painted over the
+    // whole frame and hid it in 3D, while 2D (decks hidden) showed it. Moving
+    // the decks into the style made that accident explicit, so anchor beneath
+    // them to keep the same result rather than letting the glow and its car
+    // icons suddenly paint over every carriageway.
+    const trafficAnchor = this.map.getLayer(ROAD_LAYER_SHADOW)
+      ? ROAD_LAYER_SHADOW
+      : this.map.getLayer(BUILDINGS_LAYER_ID)
+        ? BUILDINGS_LAYER_ID
+        : this.roadLabelAnchorId();
     const roadFilter: maplibregl.FilterSpecification = [
       "match",
       ["get", "class"],
@@ -707,7 +854,7 @@ export class MapRenderer {
           ],
         },
       },
-      firstSymbolLayer,
+      trafficAnchor,
     );
 
     if (this.map.hasImage(TRAFFIC_CAR_IMAGE_ID)) {
@@ -746,7 +893,7 @@ export class MapRenderer {
             "icon-opacity": 0.72,
           },
         },
-        firstSymbolLayer,
+        trafficAnchor,
       );
     }
   }
@@ -798,12 +945,21 @@ export class MapRenderer {
   private refreshWorldGeometry = (): void => {
     if (!this.map.isStyleLoaded()) return;
     const bounds = this.map.getBounds();
+    const zoom = this.map.getZoom();
+    // Quantise the viewport to a fraction of its own span rather than to a
+    // fixed 0.001 degrees (~110 m). The old key changed on virtually every
+    // pan, so a 75-300 ms extraction re-ran constantly; now it re-runs once
+    // the camera has actually moved an appreciable part of a screen.
+    const spanLng = Math.abs(bounds.getEast() - bounds.getWest());
+    const spanLat = Math.abs(bounds.getNorth() - bounds.getSouth());
+    const step = Math.max(Math.max(spanLng, spanLat) / 6, 1e-6);
+    const cell = (value: number) => Math.round(value / step);
     const viewportKey = [
-      Math.round(this.map.getZoom() * 4),
-      bounds.getWest().toFixed(3),
-      bounds.getSouth().toFixed(3),
-      bounds.getEast().toFixed(3),
-      bounds.getNorth().toFixed(3),
+      Math.round(zoom * 4),
+      cell(bounds.getWest()),
+      cell(bounds.getSouth()),
+      cell(bounds.getEast()),
+      cell(bounds.getNorth()),
     ].join("|");
     if (
       viewportKey === this.geometryViewportKey &&
@@ -841,7 +997,6 @@ export class MapRenderer {
       "living_street",
     ]);
     const models: RoadModel[] = [];
-    const decks: RoadDeckSegment[] = [];
     const nodes = new Map<string, RoadNode>();
     const seenRoads = new Set<string>();
 
@@ -849,6 +1004,12 @@ export class MapRenderer {
       const properties = feature.properties ?? {};
       const roadClass = String(properties.class ?? properties.subclass ?? "minor");
       if (!acceptedRoadClasses.has(roadClass)) continue;
+      if (zoom < (ROAD_CLASS_MIN_ZOOM[roadClass] ?? 14.5)) continue;
+      const brunnel = String(properties.brunnel ?? "");
+      // A tunnel is below ground. Extruding one put a solid slab across the
+      // surface exactly where the road is supposed to disappear.
+      if (brunnel === "tunnel") continue;
+      const isRamp = properties.ramp === 1 || properties.ramp === "1";
       const geometry = feature.geometry as {
         type: string;
         coordinates?: unknown;
@@ -866,15 +1027,12 @@ export class MapRenderer {
         seenRoads.add(signature);
 
         const points = line.map(([lng, lat]) => this.toWorld(lat, lng));
-        const widthM = roadWidthM(roadClass);
-        const heightM = roadHeightM(roadClass);
         models.push({
           points,
-          shadowPath: line.map(([lng, lat]) => [lng, lat, 0.08]),
-          topPath: line.map(([lng, lat]) => [lng, lat, heightM + 0.08]),
+          line,
           roadClass,
-          widthM,
-          heightM,
+          isRamp,
+          widthM: roadWidthM(roadClass, isRamp),
         });
 
         for (let index = 1; index < line.length; index++) {
@@ -884,18 +1042,6 @@ export class MapRenderer {
           const dy = b.y - a.y;
           const length = Math.hypot(dx, dy);
           if (length < 0.4) continue;
-          const offsetX = (-dy / length) * (widthM / 2 + 0.55);
-          const offsetY = (dx / length) * (widthM / 2 + 0.55);
-          decks.push({
-            polygon: [
-              this.toLngLat({ x: a.x + offsetX, y: a.y + offsetY }),
-              this.toLngLat({ x: b.x + offsetX, y: b.y + offsetY }),
-              this.toLngLat({ x: b.x - offsetX, y: b.y - offsetY }),
-              this.toLngLat({ x: a.x - offsetX, y: a.y - offsetY }),
-            ],
-            roadClass,
-            heightM,
-          });
 
           const aKey = roadNodeKey(...line[index - 1]);
           const bKey = roadNodeKey(...line[index]);
@@ -917,6 +1063,15 @@ export class MapRenderer {
         coordinates?: unknown;
       };
       if (geometry.coordinates === undefined) continue;
+      // Same fallback the extrusion layer uses, so the mask matches what the
+      // basemap actually draws.
+      const properties = feature.properties ?? {};
+      const rawHeight = properties.render_height;
+      const heightM =
+        typeof rawHeight === "number" && Number.isFinite(rawHeight)
+          ? rawHeight
+          : 8;
+      const hide3d = properties.hide_3d === true;
       for (const ring of buildingOuterRings({
         type: geometry.type,
         coordinates: geometry.coordinates,
@@ -938,7 +1093,7 @@ export class MapRenderer {
         }
         const centerLng = lngSum / ring.length;
         const centerLat = latSum / ring.length;
-        const signature = `${centerLng.toFixed(6)},${centerLat.toFixed(6)}`;
+        const signature = `${Math.round(centerLng * 1e6)},${Math.round(centerLat * 1e6)}`;
         if (seenBuildings.has(signature)) continue;
         seenBuildings.add(signature);
         footprints.push({
@@ -946,6 +1101,8 @@ export class MapRenderer {
             typeof feature.id === "string" || typeof feature.id === "number"
               ? feature.id
               : undefined,
+          heightM,
+          hide3d,
           ring,
           minLng,
           minLat,
@@ -958,7 +1115,6 @@ export class MapRenderer {
 
     if (models.length > 0) {
       this.roadModels = models;
-      this.roadDeckSegments = decks.slice(0, 12_000);
       this.roadNodes = nodes;
       // Low-zoom planning tiles omit individual buildings. Keep the last
       // detailed footprint cache when switching from 3D to 2D so clearance
@@ -966,105 +1122,236 @@ export class MapRenderer {
       if (footprints.length > 0) this.buildingFootprints = footprints;
       this.geometryViewportKey = viewportKey;
       this.roadGeometryRevision++;
-      this.cachedRoadLayers = null;
+      this.pushRoadStructureData();
     }
   };
 
-  private buildRoadStructureLayers(congestionIndex: number): Layer[] {
-    if (!this.threeDimensional || this.roadModels.length === 0) return [];
-    const congestionBucket = Math.round(congestionIndex / 10) * 10;
-    const key = `${this.roadGeometryRevision}|${this.theme}|${congestionBucket}|${this.showTraffic}`;
-    if (this.cachedRoadLayersKey === key && this.cachedRoadLayers) {
-      return this.cachedRoadLayers;
+  /**
+   * Invisible extruded copies of the basemap's buildings, drawn immediately
+   * ahead of the road decks so that deck.gl's depth buffer knows the towers
+   * are there.
+   *
+   * The roads are deck.gl geometry and the buildings are MapLibre's, so they
+   * live in different renderers: deck.gl draws its overlay in a separate pass
+   * over the finished map frame, and a street running behind a tower was
+   * therefore painted straight over it. No amount of building opacity can fix
+   * that — by the time the roads draw, the buildings are already resolved
+   * pixels.
+   *
+   * Interleaving is the documented fix and does not work in this stack:
+   * deck.gl 9.3 inside MapLibre 5 has its layer-group render() invoked with
+   * valid parameters and produces no pixels whatsoever, taking every road with
+   * it. Giving the towers to deck.gl instead keeps the fix inside the renderer
+   * that actually works. The mask paints nothing (alpha 0, so MapLibre's own
+   * extrusions remain the visible buildings) but its fragments still write
+   * depth, and any road behind them is culled.
+   */
+  /**
+   * The game's road structures, as MapLibre layers rather than deck.gl ones.
+   *
+   * They began in deck.gl, which draws its overlay in a separate pass over the
+   * finished map frame — so the decks painted straight over every street name,
+   * place label and POI icon. Nothing in a non-interleaved overlay can sit
+   * between the basemap's ground and its labels, and interleaving is not
+   * usable here: deck.gl 9.3 inside MapLibre 5 has its layer-group render()
+   * called with valid parameters and produces no pixels at all.
+   *
+   * As native layers they simply take their place in the style — above the
+   * basemap's roadway, below every label, and below the building extrusions.
+   * The towers therefore occlude them for free, which is why the invisible
+   * depth-mask this used to need is gone, along with its second overlay.
+   */
+  private ensureRoadStructureLayers(): void {
+    if (!this.map.getSource(ROAD_SOURCE_ID)) {
+      this.map.addSource(ROAD_SOURCE_ID, {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
     }
+    if (this.map.getLayer(ROAD_LAYER_SHADOW)) return;
+
     const dark = this.theme === "dark";
-    const arteries = this.roadModels.filter((road) =>
-      ["motorway", "trunk", "primary", "secondary"].includes(road.roadClass),
+    const anchor = this.roadLabelAnchorId();
+    const visibility = this.threeDimensional ? "visible" : "none";
+    // A zoom expression has to be the outermost one, so the per-feature width
+    // multiplies inside each stop rather than wrapping the interpolation.
+    const width = (property: string) =>
+      [
+        "interpolate",
+        ["exponential", 2],
+        ["zoom"],
+        10,
+        ["*", ["get", property], ROAD_PX_PER_M_Z10],
+        22,
+        ["*", ["get", property], ROAD_PX_PER_M_Z22],
+      ] as unknown as maplibregl.DataDrivenPropertyValueSpecification<number>;
+
+    const lineLayer = (
+      id: string,
+      widthProperty: string,
+      color: string,
+      opacity: number,
+      filter?: maplibregl.FilterSpecification,
+    ): maplibregl.LayerSpecification => ({
+      id,
+      type: "line",
+      source: ROAD_SOURCE_ID,
+      ...(filter ? { filter } : {}),
+      layout: {
+        visibility,
+        "line-cap": "round",
+        "line-join": "round",
+      },
+      paint: {
+        "line-color": color,
+        "line-opacity": opacity,
+        "line-width": width(widthProperty),
+      },
+    });
+
+    // Shadow skirt, casing, surface, centre line — added in that order against
+    // the same anchor, which keeps them in that order in the style.
+    this.map.addLayer(
+      lineLayer(
+        ROAD_LAYER_SHADOW,
+        "ws",
+        dark ? "#000000" : "#414446",
+        dark ? 0.47 : 0.255,
+      ),
+      anchor,
     );
-    const trafficColor: RGBA = !this.showTraffic
-      ? [0, 0, 0, 0]
-      : congestionBucket >= 80
-        ? [232, 72, 64, 205]
-        : congestionBucket >= 60
-          ? [231, 132, 61, 195]
-          : congestionBucket >= 40
-            ? [215, 174, 73, 180]
-            : [81, 169, 104, 175];
-    this.cachedRoadLayers = [
-      new PathLayer<RoadModel>({
-        id: "road-structure-shadows",
-        data: this.roadModels,
-        getPath: (road) => road.shadowPath,
-        getWidth: (road) => road.widthM + 6,
-        widthUnits: "meters",
-        widthMinPixels: 1.5,
-        getColor: dark ? [0, 0, 0, 120] : [65, 68, 70, 65],
-        capRounded: true,
-        jointRounded: true,
-        pickable: false,
-      }),
-      new PolygonLayer<RoadDeckSegment>({
-        id: "road-structure-decks",
-        data: this.roadDeckSegments,
-        getPolygon: (segment) => segment.polygon,
-        getFillColor: (segment) =>
-          dark
-            ? segment.roadClass === "motorway" || segment.roadClass === "trunk"
-              ? [31, 31, 31, 255]
-              : [37, 37, 37, 255]
-            : segment.roadClass === "motorway" || segment.roadClass === "trunk"
-              ? [190, 190, 190, 255]
-              : [213, 213, 213, 255],
-        extruded: true,
-        getElevation: (segment) => segment.heightM,
-        wireframe: false,
-        material: {
-          ambient: 0.42,
-          diffuse: 0.7,
-          shininess: 18,
-          specularColor: [65, 65, 65],
+    this.map.addLayer(
+      lineLayer(ROAD_LAYER_EDGE, "we", dark ? "#0c0c0c" : "#9b9b9b", 1),
+      anchor,
+    );
+    this.map.addLayer(
+      lineLayer(ROAD_LAYER_SURFACE, "w", dark ? "#303030" : "#e0e0e0", 1),
+      anchor,
+    );
+    this.map.addLayer(
+      lineLayer(ROAD_LAYER_STRIPE, "wt", "#51a968", 0.686, [
+        "==",
+        ["get", "st"],
+        1,
+      ]),
+      anchor,
+    );
+
+    this.roadLayersVisible = this.threeDimensional;
+    this.roadDataRevision = -1;
+    this.roadStripeStyleKey = "";
+    this.pushRoadStructureData();
+  }
+
+  /**
+   * Space out the basemap's repeated street names, shields and one-way arrows.
+   *
+   * The bright style repeats one-way arrows every 75 px of line and shields
+   * every 200 px. None of that showed while the game's road decks were painted
+   * over the whole frame; now that the labels correctly sit on top of them, a
+   * freeway in view becomes an unbroken chain of interstate markers. The gap
+   * is in pixels, so zooming out puts far more road on screen at the same
+   * spacing — which is why it scales with zoom rather than being a constant.
+   */
+  private declutterRoadLabels(): void {
+    const spacing = (near: number, far: number) =>
+      [
+        "interpolate",
+        ["linear"],
+        ["zoom"],
+        10,
+        far,
+        14,
+        (near + far) / 2,
+        18,
+        near,
+      ] as unknown as maplibregl.DataDrivenPropertyValueSpecification<number>;
+    for (const layer of this.map.getStyle().layers) {
+      if (layer.type !== "symbol" || !("source-layer" in layer)) continue;
+      // Our own traffic glyphs ride the same source layer; their density is a
+      // gameplay signal, not basemap furniture, so leave them alone.
+      if (layer.id === TRAFFIC_CARS_LAYER_ID) continue;
+      if (layer["source-layer"] === "transportation_name") {
+        this.map.setLayoutProperty(
+          layer.id,
+          "symbol-spacing",
+          spacing(400, 1000),
+        );
+      } else if (layer["source-layer"] === "transportation") {
+        this.map.setLayoutProperty(
+          layer.id,
+          "symbol-spacing",
+          spacing(300, 800),
+        );
+      }
+    }
+  }
+
+  /** Hand the extracted street graph to the GeoJSON source. */
+  private pushRoadStructureData(): void {
+    if (this.roadDataRevision === this.roadGeometryRevision) return;
+    const source = this.map.getSource(ROAD_SOURCE_ID) as
+      | maplibregl.GeoJSONSource
+      | undefined;
+    if (!source) return;
+    this.roadDataRevision = this.roadGeometryRevision;
+    source.setData({
+      type: "FeatureCollection",
+      features: this.roadModels.map((road) => ({
+        type: "Feature" as const,
+        geometry: { type: "LineString" as const, coordinates: road.line },
+        properties: {
+          // Proportional trim rather than a flat pad: once ramps became 8 m a
+          // fixed +6 m skirt was a 75% halo around them instead of the 32% it
+          // is on a 19 m mainline.
+          ws: road.widthM + Math.min(6, road.widthM * 0.32),
+          we: road.widthM + Math.min(2.2, road.widthM * 0.14),
+          w: road.widthM,
+          wt: Math.max(0.7, road.widthM * 0.075),
+          // Ramps carry no centre line: striping every slip road turned an
+          // interchange into a starburst of converging lines.
+          st: !road.isRamp && ARTERY_CLASSES.has(road.roadClass) ? 1 : 0,
         },
-        pickable: false,
-      }),
-      new PathLayer<RoadModel>({
-        id: "road-structure-edges",
-        data: this.roadModels,
-        getPath: (road) => road.topPath,
-        getWidth: (road) => road.widthM + 2.2,
-        widthUnits: "meters",
-        widthMinPixels: 1.4,
-        getColor: dark ? [12, 12, 12, 255] : [155, 155, 155, 255],
-        capRounded: true,
-        jointRounded: true,
-        pickable: false,
-      }),
-      new PathLayer<RoadModel>({
-        id: "road-structure-surfaces",
-        data: this.roadModels,
-        getPath: (road) => road.topPath,
-        getWidth: (road) => road.widthM,
-        widthUnits: "meters",
-        widthMinPixels: 1,
-        getColor: dark ? [48, 48, 48, 255] : [224, 224, 224, 255],
-        capRounded: true,
-        jointRounded: true,
-        pickable: false,
-      }),
-      new PathLayer<RoadModel>({
-        id: "road-structure-traffic-stripes",
-        data: arteries,
-        getPath: (road) => road.topPath,
-        getWidth: (road) => Math.max(0.7, road.widthM * 0.075),
-        widthUnits: "meters",
-        widthMinPixels: 0.65,
-        getColor: trafficColor,
-        capRounded: true,
-        jointRounded: true,
-        pickable: false,
-      }),
-    ];
-    this.cachedRoadLayersKey = key;
-    return this.cachedRoadLayers;
+      })),
+    });
+  }
+
+  private syncRoadStructureVisibility(): void {
+    if (this.threeDimensional === this.roadLayersVisible) return;
+    if (!this.map.getLayer(ROAD_LAYER_SHADOW)) return;
+    this.roadLayersVisible = this.threeDimensional;
+    for (const id of ROAD_LAYER_IDS) {
+      this.map.setLayoutProperty(
+        id,
+        "visibility",
+        this.threeDimensional ? "visible" : "none",
+      );
+    }
+  }
+
+  /** Centre-line colour tracks the congestion index. */
+  private updateRoadStructureStyle(congestionIndex: number): void {
+    if (!this.map.getLayer(ROAD_LAYER_STRIPE)) return;
+    const bucket = Math.round(congestionIndex / 10) * 10;
+    const key = `${bucket}|${this.showTraffic}`;
+    if (key === this.roadStripeStyleKey) return;
+    this.roadStripeStyleKey = key;
+    let color = "#51a968";
+    let opacity = 0.686;
+    if (!this.showTraffic) {
+      opacity = 0;
+    } else if (bucket >= 80) {
+      color = "#e84840";
+      opacity = 0.804;
+    } else if (bucket >= 60) {
+      color = "#e7843d";
+      opacity = 0.765;
+    } else if (bucket >= 40) {
+      color = "#d7ae49";
+      opacity = 0.706;
+    }
+    this.map.setPaintProperty(ROAD_LAYER_STRIPE, "line-color", color);
+    this.map.setPaintProperty(ROAD_LAYER_STRIPE, "line-opacity", opacity);
   }
 
   private nearestRoadSnap(screen: Vec2, maxDistancePx: number): {
@@ -1472,8 +1759,10 @@ export class MapRenderer {
   update(snap: SimSnapshot, game: Game): void {
     this.updateTrafficStyle(snap.traffic.congestionIndex);
     this.updateDemolishedBuildingFilter(snap);
+    this.syncRoadStructureVisibility();
+    this.updateRoadStructureStyle(snap.traffic.congestionIndex);
+    this.pushRoadStructureData();
     const layers: Layer[] = [];
-    layers.push(...this.buildRoadStructureLayers(snap.traffic.congestionIndex));
     if (this.showDemand) layers.push(this.getDemandLayer());
     if (this.showGhost) layers.push(this.getGhostLayer());
     // Draw order matters: track → trains → stations. A train rides on top of
@@ -1593,9 +1882,15 @@ export class MapRenderer {
       game.selection?.kind === "station" ? game.selection.id : null;
 
     const trackSegments = this.buildTrackSegments(snap, selLine);
+    // Clearance scars mark buildings torn down to build surface and elevated
+    // track. Scoped to the selected line on purpose: drawn for the whole
+    // network they accumulate into permanent overlapping red blobs that read
+    // as a rendering fault rather than as construction impact. Select a line
+    // to see what building it cost.
     const demolitionSites: DemolitionSite[] = [];
-    for (const line of snap.lines.values()) {
-      for (const detail of line.segmentDetails) {
+    if (selLine !== null) {
+      const line = snap.lines.get(selLine);
+      for (const detail of line?.segmentDetails ?? []) {
         for (const pos of detail.demolitionSites) {
           demolitionSites.push({ pos, alignment: detail.alignment });
         }
@@ -1606,15 +1901,15 @@ export class MapRenderer {
         id: "demolition-clearance-sites",
         data: demolitionSites,
         getPosition: (site) => this.toLngLat(site.pos),
-        getRadius: (site) => site.alignment === "surface" ? 34 : 24,
+        getRadius: (site) => site.alignment === "surface" ? 26 : 18,
         radiusUnits: "meters",
         radiusMinPixels: 2,
         getFillColor: (site) =>
           site.alignment === "surface"
-            ? ([255, 107, 91, 155] as RGBA)
-            : ([244, 184, 96, 130] as RGBA),
+            ? ([255, 107, 91, 92] as RGBA)
+            : ([244, 184, 96, 78] as RGBA),
         stroked: true,
-        getLineColor: [255, 215, 154, 205],
+        getLineColor: [255, 215, 154, 150],
         getLineWidth: 1,
         lineWidthUnits: "pixels",
         pickable: false,
