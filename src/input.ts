@@ -29,7 +29,7 @@ export function bindInput(
       map.getCanvas().style.cursor = "crosshair";
       return;
     }
-    if (game.mode === "build") {
+    if (game.blueprinting) {
       const target = renderer.pickBuildTarget(getSnapshot(), game.draft, e.point, [
         e.lngLat.lng,
         e.lngLat.lat,
@@ -69,7 +69,7 @@ export function bindInput(
       return;
     }
 
-    if (game.mode === "build") {
+    if (game.blueprinting) {
       const target = renderer.pickBuildTarget(snap, game.draft, e.point, [
         e.lngLat.lng,
         e.lngLat.lat,
@@ -107,7 +107,7 @@ export function bindInput(
   });
 
   map.on("dblclick", (e) => {
-    if (game.mode === "build") {
+    if (game.blueprinting) {
       e.preventDefault();
       game.finishLine();
     }
@@ -155,14 +155,18 @@ export function bindInput(
         }
         break;
       case "finishLine":
-        if (game.mode === "build") game.finishLine();
+        if (game.blueprinting) game.finishLine();
         break;
       case "cancel":
-        if (game.mode === "build" || game.mode === "place") game.cancelDraft();
+        // Escape steps back out one layer at a time: first disarm the map,
+        // then close the panel.
+        if (game.blueprinting) game.stopBlueprint();
+        else if (game.mode === "build" || game.mode === "place")
+          game.cancelDraft();
         else game.selection = null;
         break;
       case "undo":
-        if (game.mode === "build") game.undoDraftPoint();
+        if (game.blueprinting) game.undoDraftPoint();
         break;
       case "toggleDemand":
         renderer.showDemand = !renderer.showDemand;

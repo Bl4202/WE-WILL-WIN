@@ -746,6 +746,11 @@ input[type="range"] {
   gap: 7px;
 }
 
+/* Arming the map is the step before undo and open, so it takes its own row. */
+.blueprint-btn {
+  grid-column: 1 / -1;
+}
+
 .secondary-btn,
 .primary-btn {
   min-height: 40px;
@@ -1891,6 +1896,7 @@ body[data-theme="light"] {
 .choice-btn.active,
 .service-btn.active,
 .primary-btn,
+.blueprint-btn.active,
 #time-controls button.active,
 .segmented button.active,
 .mode-btn.active {
@@ -1903,6 +1909,7 @@ body[data-theme="light"] {
 body[data-theme="light"] .choice-btn.active,
 body[data-theme="light"] .service-btn.active,
 body[data-theme="light"] .primary-btn,
+body[data-theme="light"] .blueprint-btn.active,
 body[data-theme="light"] #time-controls button.active,
 body[data-theme="light"] .segmented button.active,
 body[data-theme="light"] .mode-btn.active {

@@ -70,6 +70,7 @@ export class Ui {
   private readonly modeFleet = document.getElementById("mode-fleet") as HTMLButtonElement;
   private readonly finishBtn = document.getElementById("btn-finish-line") as HTMLButtonElement;
   private readonly undoBtn = document.getElementById("btn-undo-line") as HTMLButtonElement;
+  private readonly blueprintBtn = document.getElementById("btn-blueprint") as HTMLButtonElement;
   private readonly focusPanel = document.getElementById("focus-panel")!;
   private readonly contextHint = document.getElementById("context-hint-text")!;
   private readonly sidebar = document.getElementById("sidebar")!;
@@ -129,6 +130,10 @@ export class Ui {
     });
     this.finishBtn.addEventListener("click", () => game.finishLine());
     this.undoBtn.addEventListener("click", () => game.undoDraftPoint());
+    this.blueprintBtn.addEventListener("click", () => {
+      if (game.blueprinting) game.stopBlueprint();
+      else game.startBlueprint();
+    });
 
     for (const button of this.serviceButtons) {
       button.addEventListener("click", () =>
@@ -434,8 +439,18 @@ export class Ui {
     this.buildAffordability.classList.toggle("over-budget", overBudget);
     this.finishBtn.disabled = overBudget || this.game.draft.length < 2;
     this.undoBtn.disabled = this.game.draft.length === 0;
+    this.blueprintBtn.textContent = this.game.blueprinting
+      ? "Stop blueprint"
+      : "Start blueprint";
+    this.blueprintBtn.classList.toggle("active", this.game.blueprinting);
+    this.blueprintBtn.setAttribute(
+      "aria-pressed",
+      String(this.game.blueprinting),
+    );
 
-    document.body.classList.toggle("is-building", this.game.mode === "build");
+    // The crosshair and the live hint belong to drawing, not to having the
+    // panel open.
+    document.body.classList.toggle("is-building", this.game.blueprinting);
     document.body.classList.toggle("is-placing", this.game.mode === "place");
     this.updateLayerAndViewControls();
     this.updateFleet(snap);
@@ -660,6 +675,12 @@ export class Ui {
         (this.game.selection
           ? "Live detail open · select another map object to compare"
           : "Select a station, route, or mobility hub to inspect it");
+      return;
+    }
+    if (!this.game.blueprinting) {
+      this.contextHint.textContent =
+        this.game.lastNotice ??
+        "Set the construction type and engineering, then start the blueprint to place stations";
       return;
     }
     const engineering =

@@ -470,7 +470,9 @@ export class MapRenderer {
   hoveredStationId: number | null = null;
   showDemand = false;
   showGhost = false;
-  showTraffic = true;
+  // Off by default: the congestion wash is a diagnostic, and it reads as the
+  // loudest thing on the map when all you wanted was to look at the city.
+  showTraffic = false;
   private threeDimensional: boolean;
   private theme: ThemeMode;
   private trafficStyleKey = "";
@@ -2346,7 +2348,7 @@ export class MapRenderer {
   }
 
   private buildDraftLayers(game: Game): Layer[] {
-    if (game.mode !== "build") return [];
+    if (!game.blueprinting) return [];
     const draftColorFor = (alignment: RailAlignment): RGBA =>
       game.buildTransitMode === "bus"
         ? [244, 184, 96, 220]

@@ -46,6 +46,14 @@ export class Game {
   mode: UiMode = "inspect";
   /** Stations of the line currently being drawn (build mode). */
   draft: LinePoint[] = [];
+  /**
+   * Whether map clicks are drawing a line.
+   *
+   * Separate from being in build mode, because the construction settings are
+   * worth opening and changing on their own. Arming on entry meant every visit
+   * to the panel dropped a station wherever the next click happened to land.
+   */
+  blueprinting = false;
   selection: Selection | null = null;
   buildTransitMode: TransitMode = "metro";
   buildAlignment: RailAlignment = "surface";
@@ -137,9 +145,26 @@ export class Game {
     if (this.mode === mode) return;
     this.mode = mode;
     if (mode === "build") this.lastNotice = null;
-    if (mode !== "build") this.draft = [];
+    if (mode !== "build") {
+      this.draft = [];
+      this.blueprinting = false;
+    }
     if (mode === "build" || mode === "place") this.selection = null;
     if (mode !== "place") this.activeFacilityType = null;
+  }
+
+  /** Arm the map so clicks place stations. */
+  startBlueprint(): void {
+    this.setMode("build");
+    this.blueprinting = true;
+    this.lastNotice = null;
+  }
+
+  /** Disarm the map and drop the draft, leaving the panel open to edit. */
+  stopBlueprint(): void {
+    this.blueprinting = false;
+    this.draft = [];
+    this.lastNotice = null;
   }
 
   setBuildTransitMode(mode: TransitMode): void {
@@ -281,6 +306,7 @@ export class Game {
     }
     this.lastNotice = `${line.name} infrastructure opened for ${formatMoney(line.constructionCost)}. Buy and assign rolling stock to begin service.`;
     this.draft = [];
+    this.blueprinting = false;
     this.mode = "inspect";
     this.selection = { kind: "line", id: line.id };
     return true;
@@ -317,6 +343,7 @@ export class Game {
 
   cancelDraft(): void {
     this.draft = [];
+    this.blueprinting = false;
     this.mode = "inspect";
     this.activeFacilityType = null;
     this.lastNotice = null;
