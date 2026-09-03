@@ -73,6 +73,7 @@ export class Ui {
   private readonly blueprintBtn = document.getElementById("btn-blueprint") as HTMLButtonElement;
   private readonly focusPanel = document.getElementById("focus-panel")!;
   private readonly contextHint = document.getElementById("context-hint-text")!;
+  private readonly contextHintBar = document.getElementById("context-hint")!;
   private readonly sidebar = document.getElementById("sidebar")!;
   private readonly sidebarTitle = document.getElementById("sidebar-title")!;
   private readonly sidebarKicker = document.getElementById("sidebar-kicker")!;
@@ -94,13 +95,27 @@ export class Ui {
   private readonly fleetLineSummary = document.getElementById("fleet-line-summary")!;
   private readonly fleetCatalog = document.getElementById("fleet-catalog")!;
   private readonly fleetOwned = document.getElementById("fleet-owned")!;
+  private readonly toggleTraffic = document.getElementById("toggle-traffic")!;
+  private readonly toggleDemand = document.getElementById("toggle-demand")!;
+  private readonly toggleGhost = document.getElementById("toggle-ghost")!;
+  private readonly viewToggleLabel = document.getElementById("view-toggle-label")!;
+  private readonly trendIcon = document.querySelector<HTMLElement>("#cashflow-stat .trend-icon");
+  private readonly themeChoiceButtons = Array.from(
+    document.querySelectorAll<HTMLButtonElement>("[data-theme-choice]"),
+  );
+  private readonly viewChoiceButtons = Array.from(
+    document.querySelectorAll<HTMLButtonElement>("[data-view-choice]"),
+  );
   private readonly settingsDialog = document.getElementById("settings-dialog") as HTMLDialogElement;
   private readonly keybindGrid = document.getElementById("keybind-grid")!;
   private readonly reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   private fleetSelectKey = "";
   private fleetCatalogKey = "";
+  private fleetSummaryKey = "";
   private focusKey = "";
+  /** The armed keybind listener, so it can be removed without firing. */
+  private pendingKeybindCapture: ((event: KeyboardEvent) => void) | null = null;
 
   constructor(
     private readonly game: Game,
@@ -275,8 +290,9 @@ export class Ui {
     const positiveCashflow = snap.economy.projectedDailyCashflow >= 0;
     this.cashflowStat.classList.toggle("positive", positiveCashflow);
     this.cashflowStat.classList.toggle("negative", !positiveCashflow);
-    const trendIcon = this.cashflowStat.querySelector(".trend-icon");
-    if (trendIcon) trendIcon.textContent = positiveCashflow ? "↗" : "↘";
+    if (this.trendIcon) {
+      this.setText(this.trendIcon, positiveCashflow ? "↗" : "↘");
+    }
     this.setAnimatedText(
       this.activePassengers,
       snap.passengers.size.toLocaleString(),
@@ -333,8 +349,10 @@ export class Ui {
     const hasYesterday = snap.kpis.boardingsYesterday > 0;
     this.kpiYesterday.classList.toggle("hidden", !hasYesterday);
     if (hasYesterday) {
-      this.kpiYesterday.textContent =
-        "yesterday " + snap.kpis.boardingsYesterday.toLocaleString();
+      this.setText(
+        this.kpiYesterday,
+        "yesterday " + snap.kpis.boardingsYesterday.toLocaleString(),
+      );
     }
 
     for (const button of this.speedButtons) {
@@ -352,27 +370,35 @@ export class Ui {
     );
     this.buildOptions.classList.toggle("hidden", this.game.mode !== "build");
     this.fleetOptions.classList.toggle("hidden", this.game.mode !== "fleet");
-    const contextualPanelVisible = this.game.mode !== "inspect";
-    this.sidebar.classList.toggle("mode-hidden", !contextualPanelVisible);
-    if (!contextualPanelVisible) {
-      this.sidebarRestore.classList.add("hidden");
-    }
-    this.sidebarKicker.textContent =
+    // Panel visibility is the player's choice alone — `collapsed`, driven by
+    // the toggle and the restore button. It used to *also* be forced closed
+    // whenever the mode was "inspect", which is both the startup mode and
+    // the one the Inspect button selects. Since #overview-options is shown
+    // in every mode except build and fleet, that made the Network-pulse
+    // readout, the hub builders and the map-layer toggles reachable only
+    // during the brief "place" mode. The same block re-hid #sidebar-restore
+    // every frame, so once the panel was closed in inspect mode there was no
+    // way left to reopen it.
+    this.setText(
+      this.sidebarKicker,
       this.game.mode === "build"
         ? "Engineering desk"
         : this.game.mode === "fleet"
           ? "Rolling stock"
           : this.game.mode === "place"
             ? "Site acquisition"
-            : "Network command";
-    this.sidebarTitle.textContent =
+            : "Network command",
+    );
+    this.setText(
+      this.sidebarTitle,
       this.game.mode === "build"
         ? "Construction"
         : this.game.mode === "fleet"
           ? "Pool & line assignments"
           : this.game.mode === "place"
             ? "Place a mobility hub"
-            : "Houston system";
+            : "Houston system",
+    );
 
     for (const button of this.serviceButtons) {
       button.classList.toggle(
@@ -403,7 +429,7 @@ export class Ui {
     );
     const depth = Math.abs(this.game.buildLevelM);
     this.depthInput.value = String(depth || 16);
-    this.depthValue.textContent = (depth || 16) + " m";
+    this.setText(this.depthValue, (depth || 16) + " m");
     for (const button of this.facilityButtons) {
       button.classList.toggle(
         "active",
@@ -414,34 +440,44 @@ export class Ui {
 
     const estimate = this.game.getDraftEstimate();
     const overBudget = estimate.totalCost > snap.economy.capitalBalance;
-    this.buildCost.textContent = formatMoney(estimate.totalCost);
-    this.buildBreakdown.textContent =
+    this.setText(this.buildCost, formatMoney(estimate.totalCost));
+    this.setText(
+      this.buildBreakdown,
       this.game.draft.length < 2
         ? "Place two stations to price the route"
         : (estimate.lengthM / 1_000).toFixed(1) +
           " km · " +
           estimate.newStations +
-          " new stations";
-    this.estimateDemolition.textContent =
+          " new stations",
+    );
+    this.setText(
+      this.estimateDemolition,
       estimate.demolishedBuildings +
-      " building" +
-      (estimate.demolishedBuildings === 1 ? "" : "s");
-    this.estimateNoise.textContent =
+        " building" +
+        (estimate.demolishedBuildings === 1 ? "" : "s"),
+    );
+    this.setText(
+      this.estimateNoise,
       estimate.averageNoiseDb > 0
         ? Math.round(estimate.averageNoiseDb) + " dB"
-        : "—";
-    this.estimateDepth.textContent = estimate.averageDepthM.toFixed(0) + " m";
-    this.buildAffordability.textContent = overBudget
-      ? "Over budget"
-      : this.game.draft.length >= 2
-        ? "Fundable"
-        : "Planning";
+        : "—",
+    );
+    this.setText(this.estimateDepth, estimate.averageDepthM.toFixed(0) + " m");
+    this.setText(
+      this.buildAffordability,
+      overBudget
+        ? "Over budget"
+        : this.game.draft.length >= 2
+          ? "Fundable"
+          : "Planning",
+    );
     this.buildAffordability.classList.toggle("over-budget", overBudget);
     this.finishBtn.disabled = overBudget || this.game.draft.length < 2;
     this.undoBtn.disabled = this.game.draft.length === 0;
-    this.blueprintBtn.textContent = this.game.blueprinting
-      ? "Stop blueprint"
-      : "Start blueprint";
+    this.setText(
+      this.blueprintBtn,
+      this.game.blueprinting ? "Stop blueprint" : "Start blueprint",
+    );
     this.blueprintBtn.classList.toggle("active", this.game.blueprinting);
     this.blueprintBtn.setAttribute(
       "aria-pressed",
@@ -459,9 +495,17 @@ export class Ui {
   }
 
   private updateFleet(snap: SimSnapshot): void {
+    // Everything below writes into #fleet-options, which is `.hidden` in
+    // every other mode. Running it anyway cost two filter passes, a spread
+    // and a join over every vehicle, sixty times a second, into a subtree
+    // nobody could see.
+    if (this.game.mode !== "fleet") return;
+
     const pool = snap.vehicles.filter((vehicle) => vehicle.lineId === null);
-    this.fleetOwned.textContent =
-      snap.vehicles.length + " owned · " + pool.length + " available";
+    this.setText(
+      this.fleetOwned,
+      snap.vehicles.length + " owned · " + pool.length + " available",
+    );
     const lines = [...snap.lines.values()];
     const selectKey = lines
       .map((line) => line.id + ":" + line.name)
@@ -507,21 +551,29 @@ export class Ui {
             ),
           )
         : 1;
-    this.fleetLineSummary.innerHTML = line
-      ? "<strong>" +
-        line.name +
-        "</strong> · " +
-        (line.direction === "bidirectional" ? "two-way" : "one-way") +
-        "<br>" +
-        (fleet.length === 0
-          ? "No service — assign a compatible vehicle from the pool."
-          : fleet.length +
-            " assigned · " +
-            formatDuration(line.headwaySec) +
-            " actual headway · " +
-            required +
-            " needed for target")
-      : "Buy vehicles into the pool now, then assign them after a line is built.";
+    // Guarded because assigning innerHTML runs the HTML parser and rebuilds
+    // the subtree even when the string is identical.
+    const summaryKey = line
+      ? `${line.id}|${line.direction}|${fleet.length}|${line.headwaySec}|${required}`
+      : "none";
+    if (summaryKey !== this.fleetSummaryKey) {
+      this.fleetSummaryKey = summaryKey;
+      this.fleetLineSummary.innerHTML = line
+        ? "<strong>" +
+          line.name +
+          "</strong> · " +
+          (line.direction === "bidirectional" ? "two-way" : "one-way") +
+          "<br>" +
+          (fleet.length === 0
+            ? "No service — assign a compatible vehicle from the pool."
+            : fleet.length +
+              " assigned · " +
+              formatDuration(line.headwaySec) +
+              " actual headway · " +
+              required +
+              " needed for target")
+        : "Buy vehicles into the pool now, then assign them after a line is built.";
+    }
 
     const balanceBucket = Math.floor(
       snap.economy.capitalBalance / 100_000,
@@ -652,50 +704,61 @@ export class Ui {
     this.fleetCatalogKey = catalogKey;
   }
 
+  /**
+   * The status bar under the map.
+   *
+   * The reference design has no permanent hint bar, and the restyle hid it
+   * outright — which also silenced every message the game had to give the
+   * player. "This route is over the available capital budget", "Bus stops
+   * must connect through the visible road network" and the rest were all
+   * being written to a `display: none` element, so a failed action simply
+   * did nothing with no explanation.
+   *
+   * So the bar now earns its place: hidden while it would only state the
+   * obvious, shown whenever there is something to say. `.has-notice` marks
+   * the case that matters and gets the accent treatment.
+   */
   private updateContextHint(): void {
+    const notice = this.game.lastNotice;
+    const text = notice ?? this.ambientHint();
+    this.setText(this.contextHint, text ?? "");
+    this.contextHintBar.classList.toggle("visible", text !== null);
+    this.contextHintBar.classList.toggle("has-notice", notice !== null);
+  }
+
+  /**
+   * The non-urgent "here is what to do next" line, or null when the current
+   * mode speaks for itself and the bar should stay out of the way.
+   */
+  private ambientHint(): string | null {
     if (this.game.mode === "place" && this.game.activeFacilityType) {
       const spec = FACILITY_SPECS[this.game.activeFacilityType];
-      this.contextHint.textContent =
+      return (
         "Place " +
         spec.label.toLowerCase() +
         " · " +
         formatMoney(spec.cost) +
-        " · Esc cancels";
-      return;
+        " · Esc cancels"
+      );
     }
-    if (this.game.mode === "fleet") {
-      this.contextHint.textContent =
-        this.game.lastNotice ??
-        "Buy vehicles into the pool, then assign compatible stock to a line";
-      return;
+    if (this.game.mode === "fleet" || this.game.mode === "inspect") {
+      return null;
     }
-    if (this.game.mode !== "build") {
-      this.contextHint.textContent =
-        this.game.lastNotice ??
-        (this.game.selection
-          ? "Live detail open · select another map object to compare"
-          : "Select a station, route, or mobility hub to inspect it");
-      return;
-    }
-    if (!this.game.blueprinting) {
-      this.contextHint.textContent =
-        this.game.lastNotice ??
-        "Set the construction type and engineering, then start the blueprint to place stations";
-      return;
-    }
+    if (this.game.mode !== "build") return null;
+    if (!this.game.blueprinting) return null;
+
     const engineering =
       this.game.buildAlignment === "underground"
         ? Math.abs(this.game.buildLevelM) + " m tunnel"
         : this.game.buildAlignment;
-    this.contextHint.textContent =
-      this.game.draft.length === 0
-        ? "Place the first " +
+    return this.game.draft.length === 0
+      ? "Place the first " +
           getTransitModeSpec(this.game.buildTransitMode).shortLabel.toLowerCase() +
           " station · " +
           engineering
-        : this.game.draft.length === 1
-          ? "Place one more station to create a service"
-          : "Keep drawing · Enter opens infrastructure · fleet is purchased separately";
+      : this.game.draft.length === 1
+        ? "Place one more station to create a service"
+        : "Keep drawing · Enter opens infrastructure · fleet is purchased separately";
   }
 
   private updateFocusPanel(snap: SimSnapshot): void {
@@ -911,18 +974,22 @@ export class Ui {
   }
 
   private updateLayerAndViewControls(): void {
-    const toggles: Array<[string, boolean]> = [
-      ["toggle-traffic", this.renderer.showTraffic],
-      ["toggle-demand", this.renderer.showDemand],
-      ["toggle-ghost", this.renderer.showGhost],
+    const toggles: Array<[HTMLElement, boolean]> = [
+      [this.toggleTraffic, this.renderer.showTraffic],
+      [this.toggleDemand, this.renderer.showDemand],
+      [this.toggleGhost, this.renderer.showGhost],
     ];
-    for (const [id, active] of toggles) {
-      const button = document.getElementById(id)!;
+    for (const [button, active] of toggles) {
       button.classList.toggle("active", active);
-      button.setAttribute("aria-pressed", String(active));
+      // classList.toggle is a real no-op when the state already matches, but
+      // setAttribute always re-sets the node and re-notifies the
+      // accessibility tree — so it needs the guard classList does not.
+      const pressed = String(active);
+      if (button.getAttribute("aria-pressed") !== pressed) {
+        button.setAttribute("aria-pressed", pressed);
+      }
     }
-    document.getElementById("view-toggle-label")!.textContent =
-      this.renderer.is3d ? "3D" : "2D";
+    this.setText(this.viewToggleLabel, this.renderer.is3d ? "3D" : "2D");
     document.body.classList.toggle("is-3d", this.renderer.is3d);
     this.preferences.viewMode = this.renderer.is3d ? "3d" : "2d";
     this.syncSettingsState();
@@ -950,17 +1017,17 @@ export class Ui {
   }
 
   private syncSettingsState(): void {
-    for (const button of document.querySelectorAll<HTMLButtonElement>(
-      "[data-theme-choice]",
-    )) {
+    // Both lists are static markup in the settings dialog, so they are
+    // collected once in the constructor. This runs from update(), and the
+    // two whole-document querySelectorAll calls it used to make were the
+    // most expensive DOM work in the per-frame path.
+    for (const button of this.themeChoiceButtons) {
       button.classList.toggle(
         "active",
         button.dataset.themeChoice === this.preferences.theme,
       );
     }
-    for (const button of document.querySelectorAll<HTMLButtonElement>(
-      "[data-view-choice]",
-    )) {
+    for (const button of this.viewChoiceButtons) {
       button.classList.toggle(
         "active",
         button.dataset.viewChoice ===
@@ -986,15 +1053,38 @@ export class Ui {
       .join("");
   }
 
+  /**
+   * Arm a keybind button to take the next keypress.
+   *
+   * Explicitly removes its own listener rather than relying on `once`, which
+   * only fires *after* a capture completes. Two consequences of that, both
+   * real: pressing Escape to dismiss the dialog was swallowed and rebound
+   * `cancel` to Escape with no way to refuse, and arming a second button
+   * left the first listener alive forever — `stopImmediatePropagation`
+   * blocked it, so it never fired, so `once` never removed it, and it sat
+   * waiting to eat some later unrelated keypress.
+   */
   private captureKeybind(button: HTMLButtonElement): void {
     if (button.classList.contains("recording")) return;
+    this.cancelKeybindCapture();
+
     const action = button.dataset.keybindAction as InputAction;
     const previous = this.preferences.keybinds[action];
     button.classList.add("recording");
     button.textContent = "Press key";
+
     const capture = (event: KeyboardEvent) => {
       event.preventDefault();
       event.stopImmediatePropagation();
+      this.cancelKeybindCapture();
+
+      // Escape means "never mind", not "bind Escape". It is also the key
+      // that closes the dialog, so binding it here would be a trap.
+      if (event.key === "Escape") {
+        this.renderKeybinds();
+        return;
+      }
+
       const next = normalizeInputKey(event.key);
       const conflictingAction = (
         Object.keys(this.preferences.keybinds) as InputAction[]
@@ -1010,10 +1100,18 @@ export class Ui {
       savePreferences(this.preferences);
       this.renderKeybinds();
     };
-    window.addEventListener("keydown", capture, {
+
+    this.pendingKeybindCapture = capture;
+    window.addEventListener("keydown", capture, { capture: true });
+  }
+
+  /** Disarm a pending capture, if any. Safe to call when none is armed. */
+  private cancelKeybindCapture(): void {
+    if (!this.pendingKeybindCapture) return;
+    window.removeEventListener("keydown", this.pendingKeybindCapture, {
       capture: true,
-      once: true,
     });
+    this.pendingKeybindCapture = null;
   }
 
   private closeSidebar(): void {
@@ -1026,6 +1124,19 @@ export class Ui {
     this.sidebar.classList.remove("collapsed");
     this.sidebarRestore.classList.add("hidden");
     this.sidebarToggle.setAttribute("aria-expanded", "true");
+  }
+
+  /**
+   * Write text only when it actually changed.
+   *
+   * `textContent =` is never a no-op: it tears down the node's children and
+   * inserts a fresh text node every time, so the unguarded writes scattered
+   * through update() were doing that roughly a thousand times a second for
+   * strings that mostly never change. Same guard as setAnimatedText, without
+   * the flourish — for labels that should not flash on every frame.
+   */
+  private setText(element: Element, value: string): void {
+    if (element.textContent !== value) element.textContent = value;
   }
 
   private setAnimatedText(element: Element, value: string): void {

@@ -7,6 +7,7 @@
 import type { Game } from "./game";
 import {
   normalizeInputKey,
+  savePreferences,
   type InputAction,
   type Preferences,
 } from "./preferences";
@@ -123,13 +124,33 @@ export function bindInput(
     ) {
       return;
     }
+    // The settings dialog is modal, but focus inside it sits on plain
+    // buttons, which none of the checks above catch — so every shortcut used
+    // to keep firing at the game behind it. Pressing "b" while reading the
+    // keybind list would silently switch to build mode.
+    const dialog = document.getElementById("settings-dialog");
+    if (dialog instanceof HTMLDialogElement && dialog.open) return;
+
+    // Chords belong to the browser. Without this, Ctrl/Cmd+D also toggles
+    // the demand layer while bookmarking, and Ctrl+A, Ctrl+B and Ctrl+V all
+    // fire game actions on top of their real ones.
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+    // Auto-repeat would run these at the OS repeat rate: holding Space
+    // toggled pause about thirty times a second and landed wherever.
+    if (e.repeat) return;
+
     const key = normalizeInputKey(e.key);
     const action = (Object.entries(preferences.keybinds).find(
       ([, boundKey]) => normalizeInputKey(boundKey) === key,
     )?.[0] ?? null) as InputAction | null;
 
-    if (/^[1-6]$/.test(e.key)) {
-      game.setSpeed(Number(e.key) - 1);
+    // Digits pick a speed, but only when nothing has claimed them. This used
+    // to run before the switch and return unconditionally, so an action
+    // rebound to a digit was dead on arrival while the keybind UI happily
+    // displayed it as bound.
+    if (action === null && /^[1-6]$/.test(key)) {
+      game.setSpeed(Number(key) - 1);
       return;
     }
 
@@ -175,7 +196,12 @@ export function bindInput(
         renderer.showGhost = !renderer.showGhost;
         break;
       case "toggleView":
+        // Persist, like the on-screen toggle does. Without this the keyboard
+        // and the button disagreed: flip the view with `v`, reload, and it
+        // was back where it started.
         renderer.set3dMode(!renderer.is3d);
+        preferences.viewMode = renderer.is3d ? "3d" : "2d";
+        savePreferences(preferences);
         break;
       case "speedUp":
         game.setSpeed(Math.min(5, game.speedIndex + 1));

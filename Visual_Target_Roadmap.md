@@ -9,6 +9,10 @@ Some of them agree with items in Phase 3 and Phase 4 of
 `Transit_Authority_GDD.md`. The notes below show where they agree. Use this
 document to examine future work.
 
+**Status of 2026-09-02.** A checked box shows a feature that the game has now.
+Section 1 and section 2 are mostly complete. The station panel of section 3 and
+the chrome of sections 4, 6, and 7 are the largest open items.
+
 The reference image shows a 3D transit map at night. The city is New York, in
 Brooklyn: Flatbush Av, Tillary St, Jay St, and Fulton Mall. The image contains
 a station panel, live departures, an economy display, and the full control
@@ -18,15 +22,18 @@ chrome. The groups below give all the detail that is visible in the image.
 
 ## 1. Map rendering — the 3D city and the day/night cycle
 
-- [ ] **3D building extrusion.** The city blocks are 3D blocks with a height.
+- [x] **3D building extrusion.** The city blocks are 3D blocks with a height.
       The height comes from the data of the building footprint. They are not
-      flat 2D areas. This is the largest visual change from the current
-      renderer. The buildings are one dark grey. There is no colour or
-      material that changes with the type of building.
-- [ ] **A control to change between 2D and 3D.** In the reference this control
+      flat 2D areas. In the reference the buildings are one dark grey, with no
+      colour for the type of building. *Complete. The game uses a
+      `fill-extrusion` layer at full opacity, with a colour ramp of five steps
+      by height. The ramp is a deliberate difference from the reference: a
+      single grey made the towers of downtown Houston one solid mass.*
+- [x] **A control to change between 2D and 3D.** In the reference this control
       is at the bottom right, and its label is "2D". It changes the camera
-      between the current flat view from above and a 3D view at an angle. This
-      control shows that the screenshot is the *3D* mode.
+      between the flat view from above and a 3D view at an angle. *Complete,
+      but at the top right, not the bottom right. The 2D mode also hides the
+      road structures and returns to a flat planning camera.*
 - [ ] **A day/night light cycle.** The light of the basemap changes with the
       clock of the simulation. It is not a fixed dark theme. The sky, the
       shade on the buildings, and the ambient tone all change. The reference
@@ -40,33 +47,38 @@ chrome. The groups below give all the detail that is visible in the image.
       alone does not give the answer at this resolution. Make a decision about
       a two-colour rule for water and green space. Do not decide this at the
       time of the implementation.*
-- [ ] **A road network below the 3D buildings.** The image shows thin grey and
+- [x] **A road network below the 3D buildings.** The image shows thin grey and
       tan lines that make a full street grid. There is also a highway
       interchange with curved ramps at the top centre. Thus the basemap holds
-      all the road detail, not only the large roads. The OSM street graph of
-      Phase 1 already has this data. But the game now draws it as flat 2D
-      lines.
-- [ ] **Camera controls for pitch and rotation.** The camera must do more than
-      pan and zoom. The current renderer stops the rotation, and this must
-      change.
-- [ ] **Round corners on the chrome.** Each panel, button, and chip in the
-      reference has soft round corners. *Warning: this is the opposite of the
-      current interface. An earlier request changed the interface to hard
-      square corners. Make a decision about which style is correct before you
-      change the style to this reference. Do not make the corners round again
-      without a decision.*
+      all the road detail, not only the large roads. *Complete. The game draws
+      its own carriageways as MapLibre line layers. They are above the basemap
+      roadway, below the labels, and below the extrusions, thus the buildings
+      hide them. A ramp draws at 8 m and a tunnel does not draw. **One item is
+      open:** a line has its width in screen pixels, thus a road does not
+      become smaller with its distance from the camera.*
+- [x] **Camera controls for pitch and rotation.** The camera must do more than
+      pan and zoom. *Complete. The 3D mode starts at 58° of pitch, with a
+      maximum of 65°, and it permits the rotation. The 2D mode returns the
+      pitch and the bearing to 0 and stops the rotation.*
+- [ ] ~~**Round corners on the chrome.**~~ **Decision made on 2026-08-31:
+      square corners win. Do not do this item.** Each panel, button, and chip
+      in the reference has soft round corners. The game deliberately uses hard
+      square corners, from the visual system in `style.md`: a pure black
+      ground, hairline white rules, and flat surfaces. Six controls stay
+      circular by decision. This closes open decision (a) at the end of this
+      document.
 
 ## 2. Rendering of the lines, the stations, and the vehicles
 
-- [ ] **The lines have a real thickness.** They are not flat paths of 2 px.
+- [x] **The lines have a real thickness.** They are not flat paths of 2 px.
       A line looks almost like a raised ribbon that follows the street grid.
-      There is a light shadow below it. Thus the line looks a little above the
-      ground, not painted flat on it.
-- [ ] **Parallel tracks in a shared corridor.** Two or more lines can use the
+      There is a light shadow below it. *Complete. The game draws a wider
+      casing below each track segment, then the segment, then a centre line.
+      An elevated segment gets a wider casing than a surface segment.*
+- [x] **Parallel tracks in a shared corridor.** Two or more lines can use the
       same corridor. Draw them as separate parallel strands. Do not draw them
-      as one line. The reference shows this along the main corridor. There the
-      red line, the green line, and the orange line are adjacent for a long
-      distance.
+      as one line. *Complete. The game divides a shared trunk into strands of
+      equal width, one for each line, and moves each one to its own side.*
 - [ ] **The line colours agree with the real world** in this New York example.
       A red badge is for the 1, 2, and 3 lines. A green badge is for the 4, 5,
       and 6 lines. An orange badge is for the B, D, F, and M lines. These are
@@ -79,11 +91,10 @@ chrome. The groups below give all the detail that is visible in the image.
       stop. An example is the badges "5" and "2" adjacent to "Flatbush Av". A
       badge is a small filled circle with a bold white letter or digit. The
       panel uses the same badge style.
-- [ ] **A highlight for the selected station.** The station in the panel is
-      "Flatbush Av". It looks different from the other stations on the map.
-      Its label text is brighter and larger, and its marker is stronger. The
-      labels of Tillary St, Jay St, and Fulton Mall are visible but clearly
-      weaker.
+- [x] **A highlight for the selected station.** The station in the panel looks
+      different from the other stations on the map. *Complete. The selected
+      station gets a blue ring, a wider stroke, and its own icon for an
+      interchange. The label emphasis of the reference is not done.*
 - [ ] **A square overlay for the platform.** There is a translucent light-blue
       rectangle at each station. It is different from the simple dot at other
       positions.
@@ -204,16 +215,16 @@ The order below is from the left to the right, as it is in the image.
 - [ ] **A moon icon** immediately after the clock. It shows the time of day.
       It agrees with the day/night light cycle in §1. This icon shows that it
       is night. It is different from the theme icon in §4.
-- [ ] **Controls to make the time fast**, with two or three steps. These are
-      after the moon icon. The current game has speed buttons. This is a
-      change of the style only, not a new function.
-- [ ] **A money chip**, separate from the time group. It has a small icon that
-      looks like a card or a bank note. After the icon is the balance
-      ("$1,055,959,939") and a live green value ("+$4.85M"). Thus this is a
-      real capital account that the game shows continuously. It is not a
-      single cost estimate. The GDD has this item: "Capital account v1" in
-      Phase 3 and "Operating account" in Phase 4. This chip is not possible
-      until that economy model exists.
+- [x] **Controls to make the time fast**, with two or three steps. *Complete.
+      The game has a pause control and the speeds ½, 1×, 10×, and 60×, plus a
+      maximum step. The reference wants a different style, not a new
+      function.*
+- [x] **A money chip**, separate from the time group. It has a small icon that
+      looks like a card or a bank note. After the icon is the balance and a
+      live green value. Thus this is a real capital account that the game shows
+      continuously. *Complete, and earlier than the GDD expected. The bottom
+      bar shows the capital balance, the daily cashflow with its sign and its
+      colour, and the number of active passengers.*
 - [ ] **A chip with the count of the active vehicles.** It has a small train
       icon and a number ("123"). Thus 123 trains are in service in the full
       network. This is cheap to add now. It is only `vehicles.length` in a
@@ -267,12 +278,12 @@ do not need a larger simulation kernel. These parts are the **station panel
 elements around data that `simulation.ts` already holds. That data is the
 ridership, the departures, and the nearby stations. It is cheap to calculate.
 
-Two decisions are open. Make them before the implementation. Do not guess at
-the time of the work.
+One decision is closed and one is open.
 
-- **(a)** Round corners or square corners. This reference has round corners
-  only. The current interface has square corners, and this was a deliberate
-  decision.
-- **(b)** The meaning of the two numbers in each row of the Departures
+- **(a) Closed on 2026-08-31: square corners win.** This reference has round
+  corners only. The game keeps its hard square corners, from the visual system
+  in `style.md`. Do not make the corners round.
+- **(b) Open.** The meaning of the two numbers in each row of the Departures
   section. The current simulation has no platform number and no track number
-  for the first number.
+  for the first number. Make this decision before the implementation. Do not
+  guess at the time of the work.

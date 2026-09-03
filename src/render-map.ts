@@ -182,6 +182,11 @@ interface RoadModel {
   /** Slip road / interchange ramp, per the tiles' own `ramp` flag. */
   isRamp: boolean;
   widthM: number;
+  /** World-metre bounds, so cursor snapping can reject in four comparisons. */
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
 }
 
 interface RoadNode {
@@ -569,7 +574,11 @@ export class MapRenderer {
       this.ensureRoadStructureLayers();
       this.ensureTrafficLayers();
       this.declutterRoadLabels();
-      this.map.once("idle", this.refreshWorldGeometry);
+      // No re-extraction here: the permanent `idle` listener added in the
+      // constructor already covers it, and the street graph comes from the
+      // tile source, which a theme change does not touch. The layers that
+      // setStyle really did drop are rebuilt above, and their data is
+      // re-pushed by ensureRoadStructureLayers.
     });
   }
 
@@ -963,13 +972,15 @@ export class MapRenderer {
       cell(bounds.getEast()),
       cell(bounds.getNorth()),
     ].join("|");
-    if (
-      viewportKey === this.geometryViewportKey &&
-      this.roadModels.length > 0 &&
-      this.buildingFootprints.length > 0
-    ) {
-      return;
-    }
+    // Whether the extraction has already run for this camera is its own fact,
+    // not something to infer from what it happened to find. Testing
+    // `buildingFootprints.length > 0` made the guard unsatisfiable wherever
+    // the building source-layer yields nothing — which is every planning
+    // zoom, since 2D opens at 10.3 and the extrusion layer starts at 12.5.
+    // The array then stayed empty forever (it is only overwritten when
+    // non-empty, further down), so this 75-300 ms extraction re-ran on every
+    // single `idle`.
+    if (viewportKey === this.geometryViewportKey) return;
 
     let roadFeatures: maplibregl.GeoJSONFeature[];
     let buildingFeatures: maplibregl.GeoJSONFeature[];
@@ -1029,12 +1040,26 @@ export class MapRenderer {
         seenRoads.add(signature);
 
         const points = line.map(([lng, lat]) => this.toWorld(lat, lng));
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+        for (const point of points) {
+          if (point.x < minX) minX = point.x;
+          if (point.x > maxX) maxX = point.x;
+          if (point.y < minY) minY = point.y;
+          if (point.y > maxY) maxY = point.y;
+        }
         models.push({
           points,
           line,
           roadClass,
           isRamp,
           widthM: roadWidthM(roadClass, isRamp),
+          minX,
+          minY,
+          maxX,
+          maxY,
         });
 
         for (let index = 1; index < line.length; index++) {
@@ -1375,24 +1400,30 @@ export class MapRenderer {
     const cursorWorld = this.toWorld(cursorGeo.lat, cursorGeo.lng);
     const metresPerPx = metersPerPixel(cursorGeo.lat, this.map.getZoom());
     const rejectRadius = maxDistancePx * metresPerPx * ROAD_SNAP_REJECT_FACTOR;
-    const rejectRadiusSq = rejectRadius * rejectRadius;
 
     for (const road of this.roadModels) {
-      let near = false;
-      for (const point of road.points) {
-        const dx = point.x - cursorWorld.x;
-        const dy = point.y - cursorWorld.y;
-        if (dx * dx + dy * dy <= rejectRadiusSq) {
-          near = true;
-          break;
-        }
+      // Bounding-box reject, computed once at extraction. The old version
+      // walked every vertex of all ~14k roads before accepting any — on the
+      // order of 10^5 distance tests per mousemove just to get started.
+      if (
+        road.maxX < cursorWorld.x - rejectRadius ||
+        road.minX > cursorWorld.x + rejectRadius ||
+        road.maxY < cursorWorld.y - rejectRadius ||
+        road.minY > cursorWorld.y + rejectRadius
+      ) {
+        continue;
       }
-      if (!near) continue;
 
+      // `road.line` is the same lng/lat that toLngLat would reconstruct from
+      // road.points — both are filled from the tile feature together — so
+      // converting is pure waste. Reading it directly also keeps nodeKey on
+      // the *original* coordinates, matching how roadNodes was keyed; the
+      // round-trip could land the other side of the 1e-6 quantisation and
+      // silently fail to match, which surfaces as "invalid" bus routing.
+      let aGeo = road.line[0];
+      let a = this.map.project(aGeo);
       for (let index = 1; index < road.points.length; index++) {
-        const aGeo = this.toLngLat(road.points[index - 1]);
-        const bGeo = this.toLngLat(road.points[index]);
-        const a = this.map.project(aGeo);
+        const bGeo = road.line[index];
         const b = this.map.project(bGeo);
         const dx = b.x - a.x;
         const dy = b.y - a.y;
@@ -1411,17 +1442,22 @@ export class MapRenderer {
           screen.x - (a.x + dx * t),
           screen.y - (a.y + dy * t),
         );
-        if (distance >= closestDistance) continue;
-        closestDistance = distance;
-        const start = road.points[index - 1];
-        const end = road.points[index];
-        closest = {
-          pos: {
-            x: start.x + (end.x - start.x) * t,
-            y: start.y + (end.y - start.y) * t,
-          },
-          nodeKey: roadNodeKey(...(t <= 0.5 ? aGeo : bGeo)),
-        };
+        if (distance < closestDistance) {
+          closestDistance = distance;
+          const start = road.points[index - 1];
+          const end = road.points[index];
+          closest = {
+            pos: {
+              x: start.x + (end.x - start.x) * t,
+              y: start.y + (end.y - start.y) * t,
+            },
+            nodeKey: roadNodeKey(...(t <= 0.5 ? aGeo : bGeo)),
+          };
+        }
+        // This segment's end is the next segment's start, so carrying it
+        // forward halves the map.project calls — the expensive part.
+        aGeo = bGeo;
+        a = b;
       }
     }
     return closest;
@@ -1481,6 +1517,12 @@ export class MapRenderer {
     sites: Vec2[];
     featureIds: Array<string | number>;
   } | null {
+    // Runs on every mousemove while blueprinting. Safe only because the
+    // viewport guard in refreshWorldGeometry is now satisfiable: this is
+    // "make sure the extraction has run for this camera", and it returns
+    // immediately once it has. Previously the guard could never be met at a
+    // planning zoom, so each mouse movement paid for a full 75-300 ms
+    // re-extraction that left the array empty and did it all again.
     if (this.buildingFootprints.length === 0) {
       this.refreshWorldGeometry();
     }

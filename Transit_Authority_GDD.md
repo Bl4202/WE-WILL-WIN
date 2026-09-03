@@ -1409,6 +1409,34 @@ medium city with very good open data**.
   - The earlier repairs still operate after this stage. They are the resequence
     of a shape, the removal of a bad coordinate, and the fallback across
     several URLs.
+- ✅ **The road structures and the buildings render in the correct order.**
+  - The roads were deck.gl geometry above the finished map frame. Thus they
+    covered the labels and the building extrusions. They are now native
+    MapLibre line layers in the style. The buildings hide them correctly.
+  - The width of a carriageway is metre-exact. MapLibre uses 512 px tiles, so
+    the usual 256 px constant gave half the correct width.
+  - A ramp draws at 8 m from the `ramp` flag of the tiles. A tunnel does not
+    draw. Each class has a minimum zoom: 34k features at z11 against 2k at
+    z17.
+  - The building extrusions are fully opaque, with a colour ramp of five
+    steps. The layer anchors resolve for each style.
+  - **Open:** a MapLibre line has its width in screen pixels, and there is no
+    width in map units. Thus a road does not become smaller with its distance
+    from the camera. At 65° of pitch a carriageway is four times too wide at
+    the horizon. The correction is to draw the roads as ground polygons.
+- ✅ **An invariant harness for the simulation kernel** (`npm run check:sim`).
+  - It operates the real kernel against the real Houston bundle, in Node. It
+    needs no browser and no test framework.
+  - It has 8 checks in 5 groups: the determinism, the conservation of the
+    trips, the fleet dispatch, the memory limits, and the performance.
+  - The determinism check is the §4.3 contract. Two runs from one seed must
+    agree after 20k ticks. The batch size must not change the result.
+  - It found three defects. A new vehicle gave no service, because each
+    vehicle started at the same position. To unassign a vehicle froze 1,062
+    waiting passengers permanently. The plan cache had no limit and passed
+    23,000 entries.
+  - The kernel is TypeScript, not Rust. But the discipline that Phase 2 needs
+    now exists, and a Rust kernel can use the same checks.
 
 **The exit gate:** a new person opens a URL and sees their own real city with a
 demand heatmap. The load must take less than 8 s on broadband. ✅ **Satisfied:
@@ -1440,7 +1468,9 @@ city.
 - ⬜ The kernel skeleton in Rust: the fixed-timestep tick, the seeded PRNG, and
   the SharedArrayBuffer bridge to deck.gl. Also a determinism test in CI, which
   replays N ticks two times and compares the state hash. The test includes the
-  comparison of WASM against native.
+  comparison of WASM against native. *(The Phase 1 harness,
+  `npm run check:sim`, already does the replay check on the TypeScript kernel.
+  The Rust kernel can use the same checks.)*
 - ⬜ The routing backends: contraction hierarchies for the road, and RAPTOR and
   CSA for the transit. Also the generation of the skims for the full zone set.
 - ⬜ The four-step static pipeline: trip generation, then gravity and IPF

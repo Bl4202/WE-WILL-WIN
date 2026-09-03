@@ -1,6 +1,8 @@
 # WE-WILL-WIN
+TEXAS 7 WE FINNA SMOKE YOU CUH
 
-*This document uses ASD-STE100 Simplified Technical English.*
+*The line above is the project banner. The remainder of this document uses
+ASD-STE100 Simplified Technical English.*
 
 Metro is a public transit simulation game. It operates in a web browser.
 
@@ -43,3 +45,17 @@ To skip the network stages, add the `--skip-network` option. This makes a
 demand-only bake, which is much more quick.
 
 To test the GTFS validation stage only, type `npm run check:gtfs`.
+
+## Procedure: how to test the simulation kernel
+
+`npm run check:sim` operates the real kernel against the real Houston bundle,
+in Node. It needs no browser and no test framework. It tests the determinism,
+the conservation of the trips, the fleet dispatch, the memory limits, and the
+performance.
+
+1. Type `npm run check:sim`.
+2. Each check must show `ok`. The last line gives the totals.
+
+The harness imports the game kernel from `src/`. Thus it has its own
+TypeScript configuration. To check its types, type `npm run typecheck:sim`.
+For the other scripts, type `npm run typecheck:scripts`.

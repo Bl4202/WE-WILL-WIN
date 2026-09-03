@@ -58,7 +58,39 @@ Make these corrections:
 - Put each vehicle that the player buys into a pool. The player must then
   assign the vehicle to a line.
 
+### Added feedback (2026-08-29)
+
+Correct the road rendering:
+
+- Return to the road appearance of the earlier version.
+- Stop the road names when they show through the buildings.
+- Make the tall buildings in downtown Houston more opaque.
+- Keep the roads, but let the buildings hide them.
+- Give each road the same height, and make that height less.
+- Correct the zoom at which the 3D buildings and the thick roads change.
+- Put the street names and the other icons above the roads.
+- Correct the road width when the player zooms out.
+- Decrease the number of highway shields.
+- Correct the scale of the roads. A road must become smaller with its distance
+  from the camera.
+
+### Added request (2026-08-31)
+
+- Switch off the congestion data by default.
+- Let the player change the construction settings without an entry into the
+  blueprint mode. The build menu must open as before. A separate button must
+  then start the blueprint.
+
+### Added request (2026-09-02)
+
+- Write all the game documents again in ASD-STE100 Simplified Technical
+  English.
+- Keep the project banner in `README.md`.
+- Update the progress documents to the latest game features.
+
 ## Completed work
+
+### Work before 2026-08-29
 
 - The operations changes of 2026-08-22 are complete. The player buys the
   rolling stock and assigns it. A line is not active until its fleet has
@@ -82,6 +114,8 @@ Make these corrections:
 - The visible tiles now show 3D street geometry. There are road decks, raised
   highway structures, edge passes, shadow passes, and traffic stripes. The 2D
   mode removes these extrusions and shows a flat planning camera.
+  **A later change replaced these road decks. See "Road rendering
+  (2026-08-31)" below.**
 - There is a road graph that the game can route on. A bus stop attaches to a
   street. The geometry between two stops follows the road vertices. It no
   longer crosses the blocks in a straight line.
@@ -146,10 +180,136 @@ Make these corrections:
 
   The operating headway was 284 seconds.
 
+### Chrome and defects (2026-08-31)
+
+- The chrome now obeys the visual system of `style.md`. The ground is pure
+  black, the rules are hairline white, the surfaces are flat, and the edges
+  are square. The mode panels, the bottom bar, and the settings dialog keep
+  their behaviour.
+- The tokens are now `#000` and `#fff`. The amber, red, positive, and negative
+  tokens are declared again. Before this, the cashflow state and the
+  over-budget state used the colours of the first version.
+- The four KPI accent colours are restored, by id. Thus the markup did not
+  change.
+- The corner radius is 0. Six controls stay circular by decision. The box
+  shadows are removed, and the blur is 2 px again.
+- The Google Fonts import is removed, because it blocked the render. The
+  system font stack returns, with tabular figures for the numeric columns.
+  The minimum type size is now 10 px.
+- **Defect:** the loop looked for a `"__vt_pending"` global in production. Thus
+  any extension with that name stopped the simulation permanently. This check
+  is now for development only.
+- **Defect:** `unassignVehicle` put the passengers on a platform that still
+  held legs for their old line. They never got off and never completed. This
+  was a leak, and it also made the active-passenger KPI too high. The game now
+  plans their route again, or counts them unserved.
+- **Defect:** `spawnTrip` returned with no action when all 48 destination
+  samples gave the origin zone. Thus a trip disappeared. It did not increase
+  `unservedTrips` or `carTripsToday`, and the transit share was too high.
+- **Defect:** `updateDemolishedBuildingFilter` made a key each frame, before
+  its early return. It is now gated on `networkVersion`, with a Set for the
+  duplicates.
+- **Performance:** `nearestRoadSnap` projected each vertex of each road on each
+  mouse movement. A pre-rejection in metres now removes most of them. Measured
+  across 8 mouse movements with approximately 11k roads: the self time
+  decreased from 44 ms to 14 ms. The price of a bus draft did not change.
+
+### Road rendering (2026-08-31)
+
+- The road structures moved from the deck.gl overlay into the MapLibre style.
+  They were deck.gl geometry above the finished map frame. Thus they covered
+  each street name, each shield, each POI icon, and the building extrusions.
+- Interleaved rendering is the documented correction, but it does not operate
+  in this stack. deck.gl 9.3 below MapLibre 5 draws no pixels at all.
+- The roads are now native line layers. They take their correct position in
+  the style: above the basemap roadway, below the labels, and below the
+  extrusions. Thus the buildings hide them, and the invisible depth mask is
+  gone.
+- A ramp reads the `ramp` flag of the tiles. It draws at 8 m, not at the 19 m
+  of the mainline. Before this, an interchange became one large slab.
+- The renderer no longer draws a tunnel. Before this, a tunnel made a slab
+  across the surface.
+- Each road class has a minimum zoom. There are 34k features at z11 against 2k
+  at z17.
+- The width expression is metre-exact. MapLibre uses 512 px tiles, thus the
+  usual 256 px constant made each carriageway half its correct width.
+- The viewport key quantises to a fraction of its own span. Thus an extraction
+  of 75–300 ms operates again on real camera movement, not on almost each pan.
+- `roadNodeKey` uses integer quantisation on the same 1e-6 grid. It no longer
+  uses `toFixed`.
+- The road labels of the basemap get a `symbol-spacing` that changes with the
+  zoom. The labels are now above the roads, thus their density is visible.
+- The building extrusions are fully opaque, with a colour ramp of five steps.
+  The layer anchors resolve for each style. Before this, they assumed the
+  first symbol layer, which put the buildings below the roads in the dark
+  theme.
+- A demolition scar belongs to the selected line only. Before this, the scars
+  collected across the full network into permanent red areas.
+
+### Interface (2026-08-31)
+
+- The congestion overlay is off by default. The player can switch it on in the
+  map layers.
+- The build menu no longer arms the map. An entry into the build mode opens
+  the panel only. The player can then read and change the construction type,
+  the direction, the engineering, and the tunnel depth.
+- A new button, "Start blueprint", arms the map. It becomes "Stop blueprint"
+  while the map is armed. To stop the blueprint removes the draft but keeps
+  the panel open.
+- A change to a construction setting no longer arms the map.
+- The Escape key now goes back one level at a time. The first press disarms
+  the map. The second press closes the panel.
+
+### Simulation kernel tests (2026-09-02)
+
+- There is a test harness for the kernel: `npm run check:sim`. It operates the
+  real kernel against the real Houston bundle, in Node. It needs no browser
+  and no test framework, because `src/simulation.ts` has no DOM references.
+- The harness tests properties, not stored values. A property test survives a
+  change to the tuning. It examines a digest against itself, a conservation
+  law, and a limit.
+- The harness has 8 checks in 5 groups: the determinism, the conservation of
+  the trips, the fleet dispatch, the memory limits, and the performance.
+- **Defect:** more trains gave no more service. Each vehicle started from the
+  same position, and `nextSpeed` is a pure function of the position. Thus two
+  vehicles of one model followed identical paths. Four trains operated as two.
+  A new vehicle now starts in the largest gap of the cycle. Measured: four
+  trains start at four gaps of 71 km on a cycle of 284 km. They stay apart,
+  between 57 km and 82 km, after 120k ticks.
+- **Defect:** to unassign a vehicle stopped each waiting passenger
+  permanently. `rerouteStranded` helped only the passengers in the vehicle.
+  The queues on the platforms still named a line with a headway of zero, and
+  `planner.rebuild` then removed that line. Measured: 1,062 passengers were
+  frozen on a network with one line, fourteen simulation hours later.
+  `rescueUnservableWaiters` now plans the platform queues and the walkers
+  again. It counts a passenger unserved only when the network cannot serve
+  them.
+- **Defect:** the plan cache had no limit. Only a network change emptied it,
+  across a key space of 1,560². Measured: more than 23,000 entries after 200k
+  ticks, and still increasing. It is now an LRU cache with the limit
+  `PLAN_CACHE_LIMIT`, which is 20,000.
+- `check-sim.mts` imports from `src/`, which Vite compiles with the bundler
+  resolution. Thus it needs its own configuration, `tsconfig.sim.json`. Type
+  it with `npm run typecheck:sim`. It is not in `typecheck:scripts`.
+
+### Documentation (2026-09-02)
+
+- The six documents are written again in ASD-STE100 Simplified Technical
+  English. They are `README.md`, `progress.md`, `Metro_Game_Overview.md`,
+  `Visual_Target_Roadmap.md`, `style.md`, and `Transit_Authority_GDD.md`.
+- The code blocks, the diagrams, the tables, and the cross-references do not
+  change. A check compares each code block against the earlier version.
+- No sentence is longer than the 25 words that the standard permits.
+
 ## QA result
 
 - The production build is correct. The only message is the usual Vite advisory
   about the large bundle.
+- `npm run check:sim` gives 8 correct checks of 8. The groups are the
+  determinism, the conservation of the trips, the fleet dispatch, the bounded
+  growth, and the performance.
+- `npm run check:gtfs` finds each of its 17 test defects. The control test on
+  the unchanged feed gives no message.
 - A person examined the Playwright screenshots of these items:
   - The 2D map.
   - The neutral dark 3D city and the neutral light 3D city.
@@ -160,6 +320,18 @@ Make these corrections:
   - The fleet assignment sequence.
 - The saved browser state agreed with the HUD. Each test scenario was complete
   and there were no console errors.
+
+## Open work
+
+- **The roads do not become smaller with their distance from the camera.** A
+  MapLibre line has its width in screen pixels, and MapLibre has no width in
+  map units. Thus one road keeps one width across the full frame. At the
+  maximum pitch of 65°, the ground below the top of the screen is 2.5 times
+  finer than at the centre. The ground at the bottom is 1.6 times coarser.
+  Thus a carriageway is four times too wide at the horizon. The correction is
+  to draw the roads as ground polygons in `fill` layers.
+- The basemap uses the hosted OpenFreeMap tiles. Our own PMTiles are the last
+  open item of Phase 1.
 
 ## Future suggestions
 

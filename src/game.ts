@@ -70,6 +70,11 @@ export class Game {
    */
   tickAlpha = 0;
 
+  /** Bumped on every draft mutation, so getDraftEstimate can memoize. */
+  private draftRevision = 0;
+  private draftEstimateKey = "";
+  private draftEstimate: ConstructionEstimate | null = null;
+
   private accumulator = 0;
   private lastFrameMs = 0;
   private frameCallback: (snap: SimSnapshot) => void = () => {};
@@ -147,6 +152,7 @@ export class Game {
     if (mode === "build") this.lastNotice = null;
     if (mode !== "build") {
       this.draft = [];
+      this.draftRevision++;
       this.blueprinting = false;
     }
     if (mode === "build" || mode === "place") this.selection = null;
@@ -164,6 +170,7 @@ export class Game {
   stopBlueprint(): void {
     this.blueprinting = false;
     this.draft = [];
+    this.draftRevision++;
     this.lastNotice = null;
   }
 
@@ -260,11 +267,13 @@ export class Game {
             : 0
           : undefined,
     });
+    this.draftRevision++;
   }
 
   undoDraftPoint(): void {
     this.lastNotice = null;
     this.draft.pop();
+    this.draftRevision++;
   }
 
   /** Commit the draft as a new line. Returns true on success. */
@@ -306,6 +315,7 @@ export class Game {
     }
     this.lastNotice = `${line.name} infrastructure opened for ${formatMoney(line.constructionCost)}. Buy and assign rolling stock to begin service.`;
     this.draft = [];
+    this.draftRevision++;
     this.blueprinting = false;
     this.mode = "inspect";
     this.selection = { kind: "line", id: line.id };
@@ -343,18 +353,42 @@ export class Game {
 
   cancelDraft(): void {
     this.draft = [];
+    this.draftRevision++;
     this.blueprinting = false;
     this.mode = "inspect";
     this.activeFacilityType = null;
     this.lastNotice = null;
   }
 
+  /**
+   * Priced construction estimate for the line currently being drawn.
+   *
+   * Memoized because the UI asks for this every frame to fill five labels,
+   * while `estimateLineConstruction` rebuilds the whole segment breakdown and
+   * deep-clones every point of every segment path — for a road-snapped bus
+   * draft that is hundreds of allocations per frame. The draft only changes
+   * when the player clicks, so the estimate does too.
+   */
   getDraftEstimate(): ConstructionEstimate {
-    return this.sim.estimateLine(
-      this.draft,
-      this.buildTransitMode,
-      this.buildAlignment,
-    );
+    const key =
+      this.draft.length +
+      "|" +
+      this.buildTransitMode +
+      "|" +
+      this.buildAlignment +
+      "|" +
+      this.buildLevelM +
+      "|" +
+      this.draftRevision;
+    if (key !== this.draftEstimateKey || !this.draftEstimate) {
+      this.draftEstimateKey = key;
+      this.draftEstimate = this.sim.estimateLine(
+        this.draft,
+        this.buildTransitMode,
+        this.buildAlignment,
+      );
+    }
+    return this.draftEstimate;
   }
 }
 

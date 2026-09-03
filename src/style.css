@@ -1834,10 +1834,6 @@ body[data-theme="light"] {
   backdrop-filter: blur(15px);
 }
 
-.context-panel.mode-hidden {
-  display: none;
-}
-
 .panel-head {
   position: relative;
   min-height: 42px;
@@ -1959,8 +1955,25 @@ body[data-theme="light"] .mode-btn.active {
   border-radius: 4px;
 }
 
+/*
+ * The hint bar is hidden by default — the reference design has no permanent
+ * status strip, and an always-on line restating the current mode is noise.
+ * It appears only when the UI has something to say, and takes the accent
+ * border when that something is a notice about an action that just failed.
+ * Hiding it outright, as this rule used to, silenced every message the game
+ * gives the player.
+ */
 #context-hint {
   display: none;
+}
+
+#context-hint.visible {
+  display: flex;
+}
+
+#context-hint.has-notice {
+  border-color: var(--amber);
+  color: var(--text);
 }
 
 #bottom-bar {
