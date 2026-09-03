@@ -1,6 +1,9 @@
 # Game Design Document — *Metro*
 
-**A browser-based, data-driven public transit simulation**
+**A public transit simulation in a browser, made from real data**
+
+*This document uses ASD-STE100 Simplified Technical English. The code blocks
+and the diagrams are source code, and they keep their original text.*
 
 | | |
 |---|---|
@@ -9,28 +12,49 @@
 | **Owner** | Lead Systems Designer / Full-Stack Architect |
 | **Status** | For technical review |
 | **Genre** | Serious simulation / management |
-| **Platform** | Web (evergreen desktop browsers; tablet as secondary) |
+| **Platform** | Web (current desktop browsers; the tablet is secondary) |
 | **Design pillars** | Data fidelity · Consequential planning · Legible complexity |
 
 ---
 
-## 0. Design Philosophy & Pillars
+## 0. Design philosophy and pillars
 
-This project is a **serious simulation**, not an arcade tycoon game. The distinction is enforced through three non-negotiable design pillars that every mechanic must serve:
+This project is a **serious simulation**. It is not an arcade tycoon game.
+Three design pillars keep this difference. Each mechanic must obey them.
 
-1. **Data Fidelity.** The game world is *derived*, not authored. Streets, population, employment, and baseline service come from open datasets (OSM, GTFS, census). The player operates on a real city, and the simulation's plausibility is its core value proposition.
-2. **Consequential Planning.** Decisions are slow, expensive, and interdependent. There is no "undo" on a tunnel bore. The player is rewarded for foresight, sensitivity analysis, and reading the data — not reflexes or click-throughput.
-3. **Legible Complexity.** The simulation is deep, but never opaque. Every number the player sees must be traceable to its inputs. The UI's primary job is to make a high-dimensional system *inspectable* without overwhelming the operator.
+1. **Data fidelity.** The game does not author its world. It *derives* the
+   world from open datasets: OSM, GTFS, and the census. These datasets give
+   the streets, the population, the employment, and the first service. The
+   player operates on a real city. The realism of the simulation is the core
+   value of the game.
+2. **Consequential planning.** The decisions are slow, expensive, and
+   connected. There is no undo function for a tunnel. The game gives its
+   reward for foresight, for sensitivity analysis, and for a correct reading of
+   the data. It does not give a reward for fast reactions or for many clicks.
+3. **Legible complexity.** The simulation is deep, but it is never hidden. The
+   player must be able to trace each number back to its inputs. The interface
+   has two tasks. It must let the player examine a system with many
+   dimensions. But it must not give the player too much data at one time.
 
-**Anti-goals:** cartoon physics, "pop-up disaster" events for their own sake, infinite money glitches, twitch micro-management, and any mechanic whose outcome cannot be explained by the model.
+**The game does not have these properties:**
+
+- Cartoon physics.
+- Disaster events with no cause.
+- Unlimited money.
+- Fast manual control.
+- Any mechanic with a result that the model cannot explain.
 
 ---
 
-## 1. Technical Stack & Data Architecture
+## 1. Technical stack and data architecture
 
-### 1.1 High-Level Architecture
+### 1.1 The architecture
 
-The application is a **client-heavy single-page application** backed by a thin ingestion/persistence service. Heavy simulation runs in the browser (Web Workers + WASM) to keep interaction latency low and server costs bounded; the backend is responsible for data ingestion, world "baking," and save-state persistence.
+The application does most of its work in the browser. A small service does the
+data ingestion and the storage. The heavy simulation operates in the browser,
+in Web Workers with WASM. Thus the interaction stays fast and the server cost
+stays low. The backend does the data ingestion, the world bake, and the storage
+of the save states.
 
 ```mermaid
 flowchart TB
@@ -58,56 +82,84 @@ flowchart TB
     STORE -. "save / load · REST" .-> PG
 ```
 
-### 1.2 Client Tech Stack
+### 1.2 The client stack
 
-| Layer | Choice | Rationale |
+| Layer | Choice | Reason |
 |---|---|---|
-| **UI framework** | **React 18** + TypeScript | Component model fits panelized control surfaces; concurrent rendering keeps the UI responsive while the sim ticks. |
-| **State** | **Zustand** (transient/UI) + immutable sim snapshots | Avoids Redux boilerplate; sim state is owned by the worker, UI subscribes to read-only snapshots. |
-| **Geospatial render** | **deck.gl** over a **MapLibre GL** basemap | deck.gl's layered GPU rendering (`ScatterplotLayer`, `PathLayer`, `TripsLayer`, `HeatmapLayer`, `PolygonLayer`) is purpose-built for large moving datasets — thousands of vehicles and demand cells at 60 fps. |
-| **Close-up 3D** | **Three.js** (via `react-three-fiber`), embedded as a deck.gl custom layer | Station-level "build mode" needs true 3D (platforms, mezzanines, rolling stock). deck.gl handles the city; Three.js handles the building interior/close inspection. |
-| **Basemap tiles** | Self-hosted **PMTiles** (vector) generated from OSM | No per-tile API cost; ships in the baked world bundle; fully offline-capable. |
-| **Simulation kernel** | **Rust compiled to WASM**, run in a **Web Worker** pool | Deterministic, fast, memory-controlled. Rust's lack of GC pauses matters for a fixed-timestep simulation. |
-| **Sim ↔ render transport** | **SharedArrayBuffer** + `Atomics` | Vehicle position/state buffers are written by the worker and read by deck.gl with zero serialization. |
-| **Charts / telemetry** | **Recharts / VisX** for panels; deck.gl for spatial | Standard 2D analytics vs. spatial analytics split cleanly. |
-| **Build** | Vite + wasm-pack | Fast HMR; WASM as a first-class module. |
+| **UI framework** | **React 18** and TypeScript | The component model agrees with the control panels. Concurrent rendering keeps the interface fast while the simulation ticks. |
+| **State** | **Zustand** for the interface, and immutable simulation snapshots | This has less code than Redux. The worker owns the simulation state, and the interface reads a snapshot only. |
+| **Map rendering** | **deck.gl** above a **MapLibre GL** basemap | The GPU layers of deck.gl are made for large moving datasets. They give thousands of vehicles and demand cells at 60 fps. The layers are `ScatterplotLayer`, `PathLayer`, `TripsLayer`, `HeatmapLayer`, and `PolygonLayer`. |
+| **Close 3D** | **Three.js** with `react-three-fiber`, in a deck.gl custom layer | The build mode at the station level needs true 3D for the platforms, the mezzanines, and the rolling stock. deck.gl draws the city, and Three.js draws the interior of a station. |
+| **Basemap tiles** | **PMTiles** vector tiles from OSM, on our own server | There is no cost for each tile. The tiles are in the world bundle, and they operate offline. |
+| **Simulation kernel** | **Rust**, compiled to WASM, in a pool of **Web Workers** | It is deterministic, fast, and it controls its memory. Rust has no garbage collector, which is important for a fixed-timestep simulation. |
+| **Simulation to renderer** | **SharedArrayBuffer** and `Atomics` | The worker writes the vehicle positions and states. deck.gl reads them with no serialization. |
+| **Charts** | **Recharts** or **VisX** for the panels, deck.gl for the map | This divides the 2D charts from the map analysis. |
+| **Build** | Vite and wasm-pack | Fast hot reload. WASM is a first-class module. |
 
-**Why WASM for the kernel and not TypeScript?** The core loop is an agent/flow simulation over tens of thousands of demand cells and vehicles at a fixed 4 Hz sim tick (interpolated to 60 Hz for rendering). JS GC pauses produce non-determinism and frame hitching. A Rust kernel gives us (a) determinism for reproducible outcomes and replay, (b) bounded memory, and (c) 5–20× throughput headroom.
+**Why the kernel uses WASM and not TypeScript.** The core loop is an agent
+simulation. It operates on tens of thousands of demand cells and vehicles, at a
+fixed simulation rate of 4 Hz. The renderer interpolates this to 60 Hz. A pause
+from the JavaScript garbage collector makes the result non-deterministic, and
+it makes the frames uneven. A Rust kernel gives three advantages:
 
-### 1.3 Backend Tech Stack
+- It is deterministic. Thus the results are reproducible, and a replay is
+  possible.
+- Its memory has a limit.
+- It is 5 to 20 times faster.
 
-| Concern | Choice | Rationale |
+### 1.3 The backend stack
+
+| Item | Choice | Reason |
 |---|---|---|
-| **Ingestion ETL** | Python (pandas + `partridge` for GTFS, `osmium`/`pyrosm` for OSM) | Richest ecosystem for GTFS/OSM parsing. |
-| **API** | Node (Fastify) or Python (FastAPI) — GraphQL for world queries, REST for saves | GraphQL lets the client request only the map bbox + layers it needs. |
-| **Spatial DB** | **PostgreSQL + PostGIS** | Authoritative store for city metadata, routing graphs, and save states; spatial indexing for tile queries. |
-| **Baked artifacts** | Object storage (S3-compatible) — **PMTiles** for geometry, **Parquet** for demand grids | Static, cacheable, CDN-friendly. The "world" is a bundle, not a live query. |
-| **Auth/Saves** | JWT + row-level save ownership | Saves are large binary blobs (sim snapshots) keyed to user + city. |
+| **Ingestion ETL** | Python, with pandas and `partridge` for GTFS, and `osmium` or `pyrosm` for OSM | These are the best libraries for GTFS and OSM. |
+| **API** | Node (Fastify) or Python (FastAPI). GraphQL for the world queries, REST for the saves | GraphQL lets the client request only the map area and the layers that it needs. |
+| **Spatial database** | **PostgreSQL** and **PostGIS** | This is the primary store for the city metadata, the routing graphs, and the save states. It has spatial indexes for the tile queries. |
+| **Baked artifacts** | Object storage that agrees with S3. **PMTiles** for the geometry and **Parquet** for the demand grids | These are static and easy to cache on a CDN. The world is a bundle, not a live query. |
+| **Auth and saves** | JWT, with an owner for each save row | A save is a large binary blob of a simulation snapshot. Its key is the user and the city. |
 
-### 1.4 Data Ingestion Pipeline — From Open Data to Playable World
+### 1.4 The data ingestion pipeline
 
-The pipeline transforms three open-data sources into a single **Baked World Bundle**. This is a batch, offline process ("world baking"), run per-city, not at runtime.
+The pipeline changes three open data sources into one **baked world bundle**.
+This is an offline batch process. The team calls it the "world bake". It
+operates one time for each city. It does not operate while a player plays.
 
-**Inputs**
+**The inputs**
 
-| Source | Format | What we extract |
+| Source | Format | What the pipeline extracts |
 |---|---|---|
-| **OpenStreetMap** | `.osm.pbf` | Street network (with road class, lanes, one-way, speed), rail geometry, land-use polygons, building footprints (with `building:levels` for volume). |
-| **GTFS / GTFS-RT** | Zipped CSV feeds | `stops`, `routes`, `trips`, `stop_times`, `shapes`, `frequencies`, `calendar`. This yields the **baseline** network the player inherits and the **service pattern** used to calibrate demand. |
-| **Census / land-use** | Census tracts (e.g., LODES/ACS), or OSM-derived proxy | Residential population, employment by tract, points of interest (schools, hospitals, retail) → the **origin/destination demand seed**. |
+| **OpenStreetMap** | `.osm.pbf` | The street network, with the road class, the lanes, the one-way flag, and the speed. Also the rail geometry, the land-use areas, and the building footprints with `building:levels` for the volume. |
+| **GTFS / GTFS-RT** | CSV files in a zip | `stops`, `routes`, `trips`, `stop_times`, `shapes`, `frequencies`, `calendar`. This gives the **first** network that the player gets, and the **service pattern** that calibrates the demand. |
+| **Census / land use** | Census tracts, such as LODES or ACS, or a proxy from OSM | The residents, the employment for each tract, and the points of interest, such as the schools, the hospitals, and the shops. This is the **seed of the origin and destination demand**. |
 
-**Baking stages**
+**The bake stages**
 
-1. **Conflation.** Snap GTFS stop coordinates onto the OSM rail/road network; resolve rail alignment geometry from `shapes.txt`; build a connected multimodal graph (walk edges + transit edges + road edges).
-2. **Demand seeding.** Partition the city into **census tracts** (the zone geometry the demand data is already published on). Each zone gets:
-   - `pop` (residents), `jobs` (employment), `poi_weight` (attraction mass by category).
-   - A **land-use class** (residential / commercial / industrial / mixed / institutional / green).
-   - *(Revised in Phase 1 from an H3 hex grid — see §4.1.1.)*
-3. **Baseline O/D matrix generation.** From GTFS service levels + census, derive a synthetic morning-peak origin–destination matrix using a **doubly-constrained gravity model** (see §4.1). This matrix is the *ground truth of latent demand* the player is trying to serve.
-4. **Calibration against reality.** Where GTFS-RT or published ridership stats exist, scale the gravity model's friction and attraction coefficients until the *baseline* network's simulated boardings match the *real* network's reported boardings (the **accuracy model**, §2.5). Store the calibrated coefficients in the bundle.
-5. **Tiling & export.** Emit PMTiles (geometry), Parquet (demand grid + O/D), and a compact routing graph (CSR adjacency) for the WASM kernel.
+1. **Conflation.** Attach the GTFS stop coordinates to the OSM rail network and
+   road network. Get the rail geometry from `shapes.txt`. Then make one
+   connected graph with the walk edges, the transit edges, and the road edges.
+2. **Demand seed.** Divide the city into **census tracts**. The demand data
+   already uses this geometry. Each zone gets these values:
+   - `pop` for the residents, `jobs` for the employment, and `poi_weight` for
+     the attraction mass of each category.
+   - A **land-use class**: residential, commercial, industrial, mixed,
+     institutional, or green.
+   - *(Phase 1 changed this from an H3 hex grid. See §4.1.1.)*
+3. **The first origin and destination matrix.** Use the GTFS service levels and
+   the census to make a synthetic morning-peak matrix. The method is a
+   **doubly-constrained gravity model**. See §4.1. This matrix is the true
+   demand that the player tries to serve.
+4. **Calibration against reality.** Some cities publish GTFS-RT data or
+   ridership statistics. Where this data exists, change the friction
+   coefficients and the attraction coefficients of the gravity model. Continue
+   until the simulated boardings of the *first* network agree with the real
+   reported boardings. This is the accuracy model of §2.5. Then put the
+   calibrated coefficients into the bundle.
+5. **Tiles and export.** Write these three artifacts:
+   - The PMTiles for the geometry.
+   - The Parquet for the demand grid and the matrix.
+   - A compact routing graph in CSR form, for the WASM kernel.
 
-**Output: the Baked World Bundle** — a versioned, immutable, CDN-served artifact:
+**The output is the baked world bundle.** It has a version, it never changes,
+and a CDN serves it.
 
 ```
 world/{city}/{version}/
@@ -119,17 +171,23 @@ world/{city}/{version}/
   └─ calibration.json         # gravity coeffs, accuracy factors
 ```
 
-> **Design consequence:** because the world is *baked*, the same city version is byte-identical for every player, which makes leaderboards, scenario challenges, and shared saves meaningful. Data refreshes (new GTFS feed) produce a new immutable version rather than mutating live worlds.
+> **A result of this design:** the bake makes each version of a city identical
+> for each player, byte for byte. Thus the leaderboards, the scenario
+> challenges, and the shared saves have a meaning. A new GTFS feed makes a new
+> version. It does not change a world that already exists.
 
 ---
 
-## 2. Core Gameplay Loops
+## 2. The core gameplay loops
 
-The game is structured as **three nested loops** operating at different time horizons. This layering is what separates it from click-driven management games: the player spends most of their time in the strategic and tactical loops, and the moment-to-moment loop is largely *observational*.
+The game has **three loops**, one in another. Each loop has a different time
+range. This structure is the difference between Metro and a management game
+with many clicks. The player stays mostly in the strategic loop and the
+tactical loop. The third loop is mostly for observation.
 
-### 2.1 The Strategic Loop — Capital Planning (horizon: years)
+### 2.1 The strategic loop — capital planning (range: years)
 
-The player acts as the transit authority's planning division.
+The player is the planning division of the transit authority.
 
 ```mermaid
 flowchart TB
@@ -142,66 +200,141 @@ flowchart TB
     OBSERVE -- "back to READ · informed by realized data" --> READ
 ```
 
-### 2.2 The Tactical Loop — Service Operations (horizon: weeks)
+### 2.2 The tactical loop — service operations (range: weeks)
 
-Given the built network, the player tunes *how it is run*:
+The network exists. Now the player controls *how it operates*.
 
-- **Frequency & headways** per route, per time-of-day band (AM peak / midday / PM peak / evening / night).
-- **Rolling-stock assignment** — which fleet class runs which line; consist length (number of cars).
-- **Fare structure** — flat, zonal, or distance-based; transfer policy; concession fares.
-- **Crew & depot logistics** — shift rostering, depot capacity, deadheading.
+- **The frequency and the headway** for each route, in each time band. The
+  bands are the morning peak, the middle of the day, the evening peak, the
+  evening, and the night.
+- **The rolling stock.** Which fleet class operates on which line, and how many
+  cars are in the train.
+- **The fare structure.** Flat, by zone, or by distance. Also the transfer
+  policy and the reduced fares.
+- **The crew and the depot.** The shift plan, the depot capacity, and the trips
+  with no passengers.
 
-Each tactical decision has an **operating cost** (energy, crew hours, maintenance accrual) weighed against a **service-quality outcome** (wait time, crowding, reliability) that feeds back into demand.
+Each tactical decision has an **operating cost** for the energy, the crew
+hours, and the maintenance. Compare this cost against the **quality of the
+service**. The quality is the wait time, how full the vehicles are, and the
+reliability. The quality then changes the demand.
 
-### 2.3 The Operational Loop — Live Simulation (horizon: a simulated day)
+### 2.3 The operational loop — the live simulation (range: one simulated day)
 
-This runs continuously while the player observes. The player rarely intervenes directly; instead they *watch the consequences* of strategic and tactical choices play out and read the telemetry:
+This loop operates continuously while the player observes. The player rarely
+does an action here. The player looks at the results of the strategic decisions
+and the tactical decisions, and reads the data.
 
-- Vehicles move along the network on their schedules.
-- Passengers spawn from demand cells, path-find across the multimodal graph, board, transfer, and alight.
-- Crowding, dwell-time inflation, bunching, and congestion emerge.
-- Live KPIs update; incidents (breakdowns, signal faults) occur at model-driven rates.
+- The vehicles move along the network on their schedules.
+- The passengers start from the demand cells. They find a path across the
+  graph, get on, transfer, and get off.
+- These effects come out of the model: full vehicles, longer dwell times, buses
+  that collect together, and congestion.
+- The live KPIs change. Incidents occur at a rate that the model gives. The
+  incidents are the breakdowns and the signal faults.
 
-The player can **pause, slow (0.5×), or accelerate (up to ~1 day/minute)** time, and can drill into any vehicle, station, or corridor.
+The player can **stop the time, make it slow (0.5×), or make it fast (to
+approximately one day each minute)**. The player can also examine any vehicle,
+station, or corridor.
 
-### 2.4 Budget & Economy Model
+### 2.4 The budget and the economy model
 
-The economy has a **clean separation of capital vs. operating accounts**, mirroring real transit finance — a deliberate serious-sim choice.
+The economy keeps the **capital account separate from the operating account**.
+This agrees with real transit finance. It is a deliberate decision for a
+serious simulation.
 
-**Capital account (one-time, lumpy):**
-- Right-of-way acquisition, tunneling/elevated/at-grade construction, stations, rolling-stock purchase, systems (signaling, electrification).
-- Funded by: accumulated surplus, **bonds** (principal + interest, servicing hits the operating account), and **grants** (unlocked by hitting coverage/ridership/equity targets).
+**The capital account** holds large single payments:
 
-**Operating account (recurring):**
-- **Revenue:** farebox + ancillary (advertising, retail concessions, parking).
-- **Costs:** energy/traction power, crew wages, maintenance (accrues from rolling-stock use — see §3.1), station operations, bond debt service.
-- **Key metric:** **Farebox Recovery Ratio** = fare revenue ÷ operating cost. Realistic values (0.2–0.7) are *expected*; the game does not demand profitability, it demands **mandate satisfaction** (coverage, ridership, equity, reliability) within a subsidy envelope.
+- The purchase of the right of way.
+- The construction of the tunnel, the elevated structure, or the surface track.
+- The stations.
+- The purchase of the rolling stock.
+- The systems for the signalling and the electricity.
+- The money comes from the surplus, from **bonds**, and from **grants**. A bond
+  has a principal and an interest, and the interest is a cost in the operating
+  account. To get a grant, the player must satisfy a target for the coverage,
+  the ridership, or the equity.
 
-**Failure states:** sustained operating deficit beyond the subsidy envelope → credit downgrade → higher bond rates → service cuts → ridership death spiral. This is the primary "lose" pressure and it is *systemic*, not a scripted event.
+**The operating account** holds the payments that repeat:
 
-### 2.5 The Accuracy Model — Grounding Outcomes in Reality
+- **The revenue** is the farebox money, plus the money from the advertising,
+  the shops, and the parking.
+- **The costs** are the traction energy, the crew wages, the maintenance, the
+  station operations, and the interest on the bonds. The maintenance cost
+  increases with the use of the rolling stock. See §3.1.
+- **The primary metric** is the **farebox recovery ratio**. This is the fare
+  revenue divided by the operating cost. A real value is between 0.2 and 0.7,
+  and the game *expects* such a value. The game does not ask for a profit. It
+  asks the player to **satisfy the mandate** in a subsidy limit. The mandate is
+  the coverage, the ridership, the equity, and the reliability.
 
-This is the mechanic that most distinguishes the game and directly answers the "serious simulation" mandate. **The player's forecasts are graded against a model calibrated to real-world performance.**
+**The failure state:** an operating loss that continues above the subsidy limit
+decreases the credit rating. Then the bond rate increases, and the player must
+decrease the service. Then the ridership decreases, and the decline continues.
+This is the primary danger in the game. It comes out of the system. It is not a
+scripted event.
 
-**How it works:**
+### 2.5 The accuracy model
 
-1. **Baseline calibration (bake time).** As described in §1.4 step 4, the simulation of the *real* inherited network is tuned until its outputs match published performance for that city — real boardings per line, real average speeds, real farebox recovery. This produces the **calibration coefficient set**: gravity friction `β`, mode-choice constants, dwell-time parameters, and reliability distributions that are *known to reproduce reality* for this specific city.
+This mechanic makes Metro different, and it satisfies the mandate for a serious
+simulation. **The game compares the forecast of the player against a model that
+agrees with real performance.**
 
-2. **Forecast at planning time.** When the player proposes a change, the game runs a fast **static assignment** using those same calibrated coefficients to produce a **ridership forecast with confidence bands** (e.g., "18,400 ± 2,100 daily boardings"). The bands widen the further the proposal extrapolates beyond conditions the calibration actually observed (a new line into a greenfield area is less certain than infilling a dense corridor).
+**The method:**
 
-3. **Realized outcome at run time.** The full dynamic simulation then produces the *actual* ridership, which will differ from the forecast because of dynamic effects the static forecast can't see: crowding-induced mode shift, transfer penalties, congestion feedback, induced demand.
+1. **The first calibration, at bake time.** §1.4 stage 4 gives this stage. The
+   team tunes the simulation of the *real* network until its output agrees with
+   the published performance of that city. The output must agree with the real
+   boardings for each line, the real average speeds, and the real farebox
+   recovery. The result is the **set of calibration coefficients**. The set
+   contains the gravity friction `β`, the mode-choice constants, the dwell-time
+   parameters, and the reliability distributions. These values are *known to
+   reproduce reality* for this city.
 
-4. **Accuracy scoring.** The delta between forecast and realized outcome becomes a **Forecast Accuracy** metric. Consistently accurate forecasting (the player learning to read the model) unlocks **planning tools** (better analytics overlays, sensitivity sliders) and **institutional credibility** (cheaper bonds, easier grants). This turns "understanding the simulation" into a first-class progression axis.
+2. **The forecast, at planning time.** The player proposes a change. The game
+   then makes a fast **static assignment** with the same calibrated
+   coefficients. This gives a **ridership forecast with confidence bands**. An
+   example is "18,400 ± 2,100 daily boardings". The bands become wider when the
+   proposal is further from the conditions that the calibration observed. A new
+   line into an empty area is less certain than a new station in a dense
+   corridor.
 
-> **Design intent:** the accuracy model means the player is rewarded for building an accurate *mental model of a real transit system's behavior*. Outcomes are never arbitrary; when ridership disappoints, the model can always explain why, and the player can inspect the causal chain.
+3. **The real result, at run time.** The full dynamic simulation then gives the
+   *real* ridership. It is different from the forecast, because the static
+   forecast cannot see the dynamic effects. These effects are the change of
+   mode when the vehicles are full, the transfer penalties, the congestion
+   feedback, and the new demand.
 
-**Historical performance as the calibration spine:** where a city publishes historical metro performance (on-time performance distributions, load factors by line, dwell times, incident rates), those distributions are ingested directly and used as the **priors** for the corresponding simulation subsystems. A player extending a real metro line inherits that line's *real* reliability and crowding characteristics as the starting point, and their changes perturb it from a realistic baseline rather than from a designer's guess.
+4. **The accuracy score.** The difference between the forecast and the real
+   result becomes the **forecast accuracy** metric. A player with an accurate
+   forecast has learned to read the model. Such a player gets **planning
+   tools**, which are better analysis overlays and sensitivity controls. The
+   player also gets **institutional credibility**, which gives cheaper bonds
+   and easier grants. Thus knowledge about the simulation is a primary method
+   of progression.
+
+> **The design intention:** the accuracy model gives its reward when the player
+> makes a correct mental model of the behaviour of a real transit system. A
+> result is never arbitrary. When the ridership is too low, the model can
+> always explain the cause, and the player can examine the full chain of
+> causes.
+
+**Historical performance is the base of the calibration.** Some cities publish
+historical metro performance. This data contains the distributions of the
+on-time performance, the load factors for each line, the dwell times, and the
+incident rates. The pipeline takes this data directly and uses it as the
+**prior** for the equivalent simulation subsystem. A player who makes a real
+metro line longer gets the *real* reliability and the *real* load of that line
+as the start condition. The changes of the player then move away from a real
+start condition, not from an estimate by a designer.
 
 ---
 
-## 3. Construction & Customization Systems
+## 3. Construction and customization
 
-Construction follows a strict **hierarchy of composition**: the player assembles small, parameterized primitives into larger systems. Every primitive exposes engineering parameters, not abstract "levels."
+The construction obeys a strict **order of composition**. The player puts small
+parts together to make large systems. Each part shows its engineering
+parameters. It does not show an abstract level number.
 
 ```mermaid
 flowchart TB
@@ -227,31 +360,34 @@ flowchart TB
     LINE --> SERVICE --> STOCK
 ```
 
-### 3.1 Rolling Stock
+### 3.1 Rolling stock
 
-Rolling stock is defined by an **engineering data sheet**, not a tier number. The player selects, and later customizes, fleet classes; the simulation uses these parameters directly in the physics and economics.
+An **engineering data sheet** gives the rolling stock. There is no tier number.
+The player selects a fleet class and can then change it. The simulation uses
+these parameters directly in its physics and its economics.
 
-**Per fleet-class parameters:**
+**The parameters of each fleet class:**
 
-| Parameter | Unit | Role in sim |
+| Parameter | Unit | Use in the simulation |
 |---|---|---|
-| **Seated capacity** | pax/car | Comfort threshold; exceeding it degrades demand. |
-| **Crush capacity** | pax/car | Hard boarding limit; load factor = load ÷ crush. |
-| **Consist length** | cars (1–N) | Set per service; capacity = per-car × cars, constrained by platform length (§3.2). |
-| **Tare mass** | t | Feeds tractive-effort and energy calculations. |
-| **Max power** | kW | Caps acceleration at speed. |
-| **Tractive effort curve** | kN vs. speed | Defines the **acceleration profile** (see below). |
-| **Max service speed** | km/h | Capped further by track speed limits. |
-| **Service braking rate** | m/s² | Affects station approach and headway safety. |
-| **Jerk limit** | m/s³ | Passenger-comfort constraint on accel/decel changes. |
-| **Door count / door width** | — | Governs **dwell time** (boarding/alighting throughput). |
-| **Regenerative braking efficiency** | % | Energy recovered → operating cost. |
-| **Traction type** | EMU / DMU / loco-hauled | Energy source, emissions, depot needs. |
-| **Purchase cost** | capital | Amortized over service life. |
-| **Mean distance between failures (MDBF)** | km | Reliability draw; lower MDBF → more incidents. |
-| **Maintenance interval** | km or hours | Triggers scheduled maintenance (see cycle below). |
+| **Seated capacity** | passengers/car | The comfort limit. Above it, the demand decreases. |
+| **Crush capacity** | passengers/car | The hard limit for boarding. The load factor is the load divided by the crush capacity. |
+| **Consist length** | cars (1–N) | Set for each service. The capacity is the value for each car multiplied by the number of cars. The platform length limits it. See §3.2. |
+| **Tare mass** | t | An input to the tractive effort and the energy. |
+| **Max power** | kW | It limits the acceleration at speed. |
+| **Tractive effort curve** | kN against speed | It gives the **acceleration profile**. See below. |
+| **Max service speed** | km/h | The track speed limits decrease it further. |
+| **Service braking rate** | m/s² | It changes the approach to a station and the safe headway. |
+| **Jerk limit** | m/s³ | A comfort limit on the change of the acceleration. |
+| **Door count and door width** | — | These control the **dwell time**, which is the rate of boarding and getting off. |
+| **Regenerative braking efficiency** | % | The recovered energy decreases the operating cost. |
+| **Traction type** | EMU / DMU / locomotive | The energy source, the emissions, and the depot needs. |
+| **Purchase cost** | capital | The game divides it across the service life. |
+| **Mean distance between failures (MDBF)** | km | The reliability draw. A lower MDBF gives more incidents. |
+| **Maintenance interval** | km or hours | It starts a scheduled maintenance. See the cycle below. |
 
-**Power / acceleration curve.** Acceleration is computed physically each sim tick rather than assumed constant:
+**The power and acceleration curve.** The game calculates the acceleration with
+physics at each simulation tick. It does not use a constant.
 
 ```
 a(v) = ( F_tractive(v) − F_resistance(v) ) / (m_tare + m_pax)
@@ -261,95 +397,192 @@ where  F_tractive(v) = min( F_max ,  P_max / v )        # power-limited above ba
        a(v) is further clamped by the jerk limit and comfort ceiling
 ```
 
-This means a **fully loaded** train accelerates measurably slower (higher `m_pax`), inflating run times on crowded peak services — a real, emergent operating constraint the player must plan around, not a hidden multiplier.
+Thus a **full** train accelerates measurably more slowly, because `m_pax` is
+larger. This makes the run time longer on a full peak service. It is a real
+operating limit that the player must plan for. It is not a hidden multiplier.
 
-**Maintenance cycles.** Each vehicle accrues mileage; maintenance is modeled as a **laddered cycle**, each tier taking the unit out of service for a duration and cost:
+**The maintenance cycles.** Each vehicle collects distance. The maintenance is
+a **ladder of levels**. Each level takes the vehicle out of service for a time
+and for a cost.
 
-| Tier | Trigger (typical) | Duration | Effect if deferred |
+| Level | Usual trigger | Duration | Effect if the player defers it |
 |---|---|---|---|
-| **Daily check / cleaning** | every service day | overnight | minor reliability decay |
-| **A-service (light)** | ~15–25k km | hours | rising failure probability |
-| **B/C-service (heavy)** | ~100–150k km | days | sharp MDBF drop |
-| **Overhaul** | ~800k–1.2M km or mid-life | weeks | forced withdrawal risk |
+| **Daily check and cleaning** | each service day | one night | a small decrease of the reliability |
+| **A-service (light)** | approximately 15–25k km | hours | the probability of a failure increases |
+| **B/C-service (heavy)** | approximately 100–150k km | days | a large decrease of the MDBF |
+| **Overhaul** | approximately 800k–1.2M km, or the middle of the life | weeks | a risk of a forced withdrawal |
 
-Deferring maintenance to save operating cash **raises the incident rate** (breakdowns → delays → crowding → demand loss), giving the player a genuine short-vs-long-term tradeoff. Depot **maintenance-bay capacity** caps how many units can be serviced concurrently — an infrastructure constraint (§3.2) that couples fleet size to depot investment.
+If the player defers the maintenance to keep money, the **incident rate
+increases**. A breakdown makes a delay, a delay makes the vehicles full, and
+full vehicles decrease the demand. Thus the player has a real choice between
+the short term and the long term. The **maintenance bay capacity** of the depot
+limits how many vehicles get service at the same time. This is an
+infrastructure limit (§3.2) that connects the fleet size to the depot
+investment.
 
 ### 3.2 Infrastructure
 
-**Stations** are the highest-detail buildable objects and expose a real footprint and internal circulation model.
+**A station** is the object with the most detail. It has a real footprint and a
+model of its internal circulation.
 
-| Parameter | Options / Range | Simulation role |
+| Parameter | Options or range | Use in the simulation |
 |---|---|---|
-| **Footprint** | occupies real parcels; may require **land acquisition** (cost scales with land value from OSM/land-use) | Cost driver; can be blocked by protected land. |
-| **Construction method** | at-grade / elevated / cut-and-cover / bored tunnel | Order-of-magnitude cost & disruption differences; bored tunnel most expensive, least surface impact. |
-| **Platform length** | metres → caps max consist length | Hard cap on train capacity at that station; short platforms throttle a whole line. |
-| **Platform config** | side / island / stacked / Spanish solution | Affects transfer flow, dwell efficiency, and footprint. |
-| **Platform height** | low / high | Level boarding → shorter dwell + accessibility. |
-| **Vertical circulation** | # stairs / escalators / lifts, each with throughput (pax/min) | Governs **egress time**; undersizing creates platform crowding and safety limits. |
-| **Entrance/exit placement** | player positions each portal on the street grid | **Determines the station's catchment.** Walk-access is computed from portals, not station centroid — a well-placed second entrance can materially expand ridership. |
-| **Entrance capacity** | fare gates / passageway width | Throughput limit during peak surges → queueing. |
-| **Fare-paid zone** | gated / open / proof-of-payment | Affects dwell, fare evasion, and staffing cost. |
+| **Footprint** | It occupies real land. It can need **land acquisition**. The cost increases with the land value from OSM and the land use. | A cost driver. Protected land can stop it. |
+| **Construction method** | at grade / elevated / cut and cover / bored tunnel | The cost and the disruption are very different. A bored tunnel is the most expensive, but it disturbs the surface least. |
+| **Platform length** | metres. It limits the number of cars. | A hard limit on the train capacity at that station. A short platform limits a full line. |
+| **Platform configuration** | side / island / stacked / Spanish solution | It changes the transfer flow, the dwell efficiency, and the footprint. |
+| **Platform height** | low / high | A level entry gives a shorter dwell and better accessibility. |
+| **Vertical circulation** | The number of stairs, escalators, and lifts. Each has a rate in passengers/min. | It controls the **exit time**. If it is too small, the platform becomes full and safety limits apply. |
+| **Entrance position** | The player positions each entrance on the street grid. | **It gives the catchment of the station.** The game calculates the walk access from the entrances, not from the centre of the station. A second entrance in the correct position can increase the ridership very much. |
+| **Entrance capacity** | The fare gates and the width of the passage. | A limit at the peak. Above it, a queue starts. |
+| **Fare zone** | gated / open / proof of payment | It changes the dwell, the fare evasion, and the staff cost. |
 
-**Entrance/exit placement is a first-class strategic lever.** The catchment of a station is the union of walking-distance isochrones from *each portal*. Placing an entrance on the far side of a river, rail cut, or arterial road can double effective catchment; a poorly placed single entrance strands nearby demand behind a barrier. The simulation computes portal-level pedestrian access on the OSM walk graph, so this is data-driven, not cosmetic.
+**The position of an entrance is a primary strategic decision.** The catchment
+of a station is the union of the walk isochrones from *each entrance*. An
+entrance on the far side of a river, a rail cut, or a large road can double the
+catchment. One entrance in an incorrect position leaves demand behind a
+barrier. The simulation calculates the pedestrian access from each entrance on
+the OSM walk graph. Thus this decision uses data. It is not decoration.
 
-**Platform length ↔ rolling stock coupling.** `max_consist_at_station = floor(platform_length / car_length)`. A line's practical capacity is the **minimum** platform length across all its stations. This forces coherent corridor planning: upgrading trains is pointless if one legacy station's platform can't hold them. Selective-door-operation is available as a costly mitigation.
+**The platform length controls the rolling stock.** The formula is
+`max_consist_at_station = floor(platform_length / car_length)`. The practical
+capacity of a line is the **minimum** platform length of all its stations. Thus
+the player must plan the full corridor. A better train has no value if one old
+station cannot hold it. Selective door operation is available, but it is
+expensive.
 
-**Track & alignment segments** carry: grade (%), minimum curve radius (caps speed), speed limit, electrification type, and signaling headway capability (fixed-block vs. moving-block → minimum safe headway → maximum line frequency).
+**The track and alignment segments** carry these values:
 
-**Multi-modal transfer hubs** are the connective tissue and a distinct buildable class:
+- The grade, in %.
+- The minimum curve radius, which limits the speed.
+- The speed limit.
+- The electrification type.
+- The signalling headway.
 
-- A hub links two or more modes (metro ↔ bus ↔ regional rail ↔ bike-share ↔ park-and-ride).
-- Modeled with an explicit **transfer graph**: each connection has a **walk time**, **vertical penalty**, and **out-of-system penalty** (perceived cost of transferring, calibrated from real data).
-- **Transfer penalty is a demand suppressor.** The mode-choice model (§4) adds a perceived-time penalty per transfer; well-designed hubs (short, level, weather-protected walks; timed cross-platform interchange) *reduce* that penalty and unlock trips that would otherwise not use transit at all.
-- Timed transfers (pulse scheduling) can be configured at hubs where multiple lines are synchronized to minimize connection wait — a high-skill tactical option.
+The signalling is a fixed block or a moving block. It gives the minimum safe
+headway, and thus the maximum frequency of the line.
 
-### 3.3 Transport Modes — the Mode Catalogue
+**A transfer hub** connects the network. It is a separate object that the
+player builds.
 
-Every mode is assembled from the same primitives — rolling stock (§3.1), infrastructure (§3.2), and a service pattern — but each occupies a distinct band of **right-of-way class**, **capacity**, **cost structure**, and **flexibility**. Critically, the game **does not let the player choose a mode by taste**: the demand data dictates which mode is economically justified in a given corridor. Overbuild (heavy rail down a low-density street) and stranded capital plus a collapsed farebox ratio punish you; underbuild (local buses on a 20,000 pax/hr trunk) and the assignment model buries you in crush loads and left-behinds, shedding riders back to cars.
+- A hub connects two or more modes. Examples are metro, bus, regional rail,
+  bike-share, and park-and-ride.
+- An explicit **transfer graph** models it. Each connection has a **walk
+  time**, a **vertical penalty**, and an **out-of-system penalty**. The last
+  value is the perceived cost of a transfer, and real data calibrates it.
+- **A transfer penalty decreases the demand.** The mode-choice model (§4) adds
+  a perceived time penalty for each transfer. A good hub *decreases* that
+  penalty and thus permits journeys that transit could not get. A good hub has
+  short, level, protected walks, and a cross-platform interchange at the
+  correct time.
+- The player can configure a timed transfer at a hub. Then two or more lines
+  arrive together and the connection wait is minimum. This is a difficult
+  tactical option.
 
-| Mode | Right-of-way | Capacity (pax/hr/dir) | Rel. capital / km | Commercial speed | Stop spacing | Best-fit context |
+### 3.3 The mode catalogue
+
+Each mode uses the same parts: the rolling stock (§3.1), the infrastructure
+(§3.2), and a service pattern. But each mode has its own class of right of way,
+capacity, cost, and flexibility. The game **does not let the player select a
+mode by preference.** The demand data shows which mode is correct for a
+corridor.
+
+An example of too much construction is a heavy rail line along a street with
+few persons. Then you get an unused asset and a very low farebox ratio. An
+example of too little construction is local buses in a corridor with 20,000
+passengers each hour. Then the assignment model fills the buses, the passengers
+cannot get on, and they return to their cars.
+
+| Mode | Right of way | Capacity (pax/hr/dir) | Rel. capital / km | Commercial speed | Stop spacing | Best use |
 |---|---|---|---|---|---|---|
-| **Heavy rail / Metro** | fully grade-separated | 25k–80k | ●●●●● | 30–40 km/h | 0.8–2 km | dense urban core, highest-volume trunks |
-| **Commuter / Regional rail** | dedicated or shared mainline | 10k–40k | ●●●●○ (cheaper if reusing ROW) | 45–80 km/h | 2–8 km | suburb → core, long-haul |
-| **Light rail (LRT)** | semi-segregated, some street-running | 5k–20k | ●●●○○ | 20–30 km/h | 0.5–1.2 km | medium corridors, growing cities |
-| **Tram / Streetcar** | mixed traffic (street) | 2k–8k | ●●○○○ | 12–20 km/h | 300–500 m | dense urban, place-making |
-| **Bus Rapid Transit (BRT)** | dedicated busway + stations | 8k–25k | ●●○○○ | 20–30 km/h | 0.4–0.8 km | rail-like capacity, fast & cheap to deploy |
-| **Local bus** | mixed traffic (road) | 1k–5k | ●○○○○ | 12–18 km/h | 200–400 m | coverage, low density, feeders |
-| **Express / Limited bus** | road, often highway/HOV | 2k–6k | ●○○○○ | 25–45 km/h | wide / express | suburban express, park-and-ride runs |
-| **Trolleybus** | mixed traffic + catenary | 1k–5k | ●●○○○ | 12–18 km/h | 200–400 m | zero-emission street corridors |
-| **Ferry / Waterbus** | waterway (free ROW, costly terminals) | 1k–5k | ●●○○○ | varies (tide/wind) | wide | cities split by water; shortcuts road detours |
-| **Monorail / APM** | elevated proprietary guideway | 5k–15k | ●●●●○ | 30–45 km/h | 0.6–1.5 km | airports, campuses, dense elevated corridors |
-| **Aerial gondola / cable car** | cable over terrain | 1k–4k | ●●●○○ | 10–20 km/h | fixed stations | steep topography, informal settlements, river spans |
-| **Funicular** | steep-grade rail | <2k | ●●●○○ | slow | 2 stations | niche hillside links |
-| **Demand-responsive (DRT) / microtransit** | on-demand, no fixed route | low | ●○○○○ | variable | none (door-area) | very low density, first/last-mile, paratransit |
-| **Bike-share / micromobility** | cycle network | feeder | ●○○○○ | 12–18 km/h | dock grid | first/last-mile access extension |
-| **Park-and-Ride (access node)** | auto-access interchange | — | ●●○○○ | — | — | converts suburban car trips to transit at the boundary |
+| **Heavy rail / Metro** | fully grade-separated | 25k–80k | ●●●●● | 30–40 km/h | 0.8–2 km | a dense city centre, the largest corridors |
+| **Commuter / Regional rail** | dedicated or shared main line | 10k–40k | ●●●●○ (cheaper if it reuses a right of way) | 45–80 km/h | 2–8 km | suburb to centre, long distance |
+| **Light rail (LRT)** | partly separate, some street running | 5k–20k | ●●●○○ | 20–30 km/h | 0.5–1.2 km | medium corridors, cities that grow |
+| **Tram / Streetcar** | mixed traffic (street) | 2k–8k | ●●○○○ | 12–20 km/h | 300–500 m | a dense city, and to make a place |
+| **Bus Rapid Transit (BRT)** | a dedicated busway with stations | 8k–25k | ●●○○○ | 20–30 km/h | 0.4–0.8 km | a capacity like rail, fast and cheap to build |
+| **Local bus** | mixed traffic (road) | 1k–5k | ●○○○○ | 12–18 km/h | 200–400 m | coverage, low density, feeder routes |
+| **Express / Limited bus** | road, often a highway or an HOV lane | 2k–6k | ●○○○○ | 25–45 km/h | wide / express | suburban express, park-and-ride |
+| **Trolleybus** | mixed traffic with overhead wire | 1k–5k | ●●○○○ | 12–18 km/h | 200–400 m | street corridors with no emissions |
+| **Ferry / Waterbus** | waterway (free right of way, expensive terminals) | 1k–5k | ●●○○○ | it changes with the tide and the wind | wide | a city that water divides; it makes a road detour shorter |
+| **Monorail / APM** | an elevated guideway of one supplier | 5k–15k | ●●●●○ | 30–45 km/h | 0.6–1.5 km | airports, campuses, dense elevated corridors |
+| **Aerial gondola / cable car** | a cable above the ground | 1k–4k | ●●●○○ | 10–20 km/h | fixed stations | steep ground, informal areas, river crossings |
+| **Funicular** | rail on a steep grade | <2k | ●●●○○ | slow | 2 stations | a special link on a hill |
+| **Demand-responsive (DRT) / microtransit** | on demand, with no fixed route | low | ●○○○○ | it changes | none (near the door) | very low density, the first and last part of a trip, paratransit |
+| **Bike-share / micromobility** | the cycle network | feeder | ●○○○○ | 12–18 km/h | a grid of docks | it makes the access area larger |
+| **Park-and-Ride (an access node)** | an interchange for cars | — | ●●○○○ | — | — | it changes a suburban car trip into a transit trip at the boundary |
 
-**Right-of-way & congestion-exposure ladder.** The single most consequential property of a mode is *which graph edges it runs on* (§4.2). **Fully grade-separated** modes (metro, monorail, APM) are immune to road congestion and keep their timetable under load; **semi-segregated** modes (LRT, BRT) take partial delay at junctions and shared segments; **mixed-traffic** modes (tram, trolleybus, local/limited bus) inherit the full BPR link delay of the roads they share. This is why **grade separation is modeled as an expensive, quantifiable purchase of reliability** rather than a cosmetic choice — and why building a dedicated bus lane visibly moves a surface route's on-time-performance distribution.
+**The ladder of exposure to congestion.** The most important property of a mode
+is the graph edges that it operates on. See §4.2.
 
-**The mode-fit function.** For any corridor the player draws, the game shows a **cost-per-rider curve for each mode** given that corridor's forecast peak flow (from §4.1) and length. Because every mode has a **capacity ceiling** and a **cost floor**, these curves cross at natural density thresholds, producing a "right tool for the corridor" without ever forcing the choice — the player can overrule the recommendation and live with the economics.
+- **Fully grade-separated** modes are metro, monorail, and APM. Road congestion
+  does not affect them. They keep their timetable under a load.
+- **Partly separate** modes are LRT and BRT. They get a part of the delay at
+  the junctions and on the shared segments.
+- **Mixed traffic** modes are the tram, the trolleybus, and the local or
+  limited bus. They get the full BPR delay of the roads that they share.
 
-**Multi-modal synergy (trunk-and-feeder).** Feeder modes (local bus, bike-share, DRT, park-and-ride) exist to fill high-capacity trunks (metro, BRT, regional rail). The mode-choice model (§4.1.4) rewards well-designed trunk-feeder networks *automatically*, because a good feeder lowers the **access/egress** term of the total-journey generalized cost — meaning a cheap bus route can unlock ridership on an expensive rail line it never touches. Conversely, a trunk with no feeders strands its own catchment. This interdependence is the strategic heart of network design.
+Thus the game models grade separation as an expensive purchase of reliability
+that a player can measure. It is not a decoration. This is also why a dedicated
+bus lane visibly changes the on-time performance of a surface route.
 
-**Rolling stock ↔ mode.** The §3.1 data-sheet parameters specialize per mode: an EMU metro set (third-rail/OHLE, CBTC-capable, high door count for fast dwell) versus a diesel regional set (long consist, sparse doors, high top speed) versus an articulated BRT bus (road physics, curb boarding) versus an on-demand van (dynamic dispatch). The physics, energy, maintenance, and reliability models (§3.1) apply uniformly; only the parameter values change.
+**The mode-fit function.** The player draws a corridor. The game then shows a
+**cost-per-passenger curve for each mode**, from the forecast peak flow of that
+corridor (§4.1) and its length. Each mode has a capacity limit and a cost
+minimum. Thus the curves cross at natural density values. This gives the
+correct tool for the corridor, but the game never forces the choice. The player
+can select a different mode and accept the economics.
 
-### 3.4 Customization & Progression
+**The trunk and the feeder.** The feeder modes are the local bus, the
+bike-share, the DRT, and the park-and-ride. They fill the trunk modes, which
+are the metro, the BRT, and the regional rail. The mode-choice model (§4.1.4)
+gives an *automatic* reward for a good trunk-and-feeder network. A good feeder
+decreases the access and exit part of the full journey cost. Thus a cheap bus
+route can increase the ridership of an expensive rail line that it never
+touches. A trunk with no feeder cannot get its own catchment. This connection
+is the centre of network design.
 
-Customization is **engineering-driven, not cosmetic-driven**. Progression unlocks *capabilities and tools*, not raw stat boosts:
+**The rolling stock for each mode.** The parameters of §3.1 change with the
+mode. An EMU metro set has a third rail or an overhead line, it can use CBTC,
+and it has many doors for a fast dwell. A diesel regional set has a long
+consist, few doors, and a high top speed. An articulated BRT bus has road
+physics and boarding at the kerb. An on-demand van has dynamic dispatch. The
+models for the physics, the energy, the maintenance, and the reliability (§3.1)
+apply to all of them. Only the values change.
 
-- **Fleet customization:** adjust consist length, door config trade-offs, interior layout (seated vs. standing ratio — a comfort/capacity tradeoff), and traction package.
-- **Signaling upgrades:** fixed-block → CBTC/moving-block reduces minimum headway, raising line throughput without new track — a high-value, capital-cheap capacity unlock.
-- **Institutional progression:** accurate forecasting and hit mandates unlock analytics overlays, cheaper financing, and larger capital envelopes (see §2.5). This ties mastery of the *model* to expanded agency in the *world*.
+### 3.4 Customization and progression
+
+The customization is **engineering, not decoration**. The progression gives new
+*capabilities and tools*. It does not give a larger number.
+
+- **Fleet customization:** change the number of cars, the door configuration,
+  the interior layout, and the traction package. The interior layout is a
+  compromise. More seats give comfort, and more standing space gives capacity.
+- **Signalling upgrades:** a change from a fixed block to CBTC or a moving
+  block decreases the minimum headway. Thus the line carries more passengers
+  with no new track. This is a large increase in capacity for a small capital
+  cost.
+- **Institutional progression:** an accurate forecast and a satisfied mandate
+  give analysis overlays, cheaper finance, and a larger capital limit. See
+  §2.5. Thus knowledge of the *model* gives more control of the *world*.
 
 ---
 
-## 4. Simulation Engine
+## 4. The simulation engine
 
-The engine is a **deterministic, fixed-timestep, multi-agent flow simulation** with a static-assignment forecasting front end. It is organized as a pipeline of subsystems that run each sim tick (default 4 Hz).
+The engine is a **deterministic, fixed-timestep, multi-agent flow simulation**.
+It has a static forecast stage in front of it. It is a pipeline of subsystems.
+The subsystems operate at each simulation tick, and the default rate is 4 Hz.
 
-### 4.1 The Data-to-Ridership Pipeline — Core Algorithms
+### 4.1 From the data to the ridership — the core algorithms
 
-This is the heart of the game and its central claim to realism: **player decisions produce ridership, revenue, and congestion through the same class of algorithms that real Metropolitan Planning Organizations use** — the canonical **four-step travel-demand model** (trip generation → distribution → mode choice → assignment), wrapped in a **calibration layer** that ties every coefficient to observed data. Nothing here is a designer's fudge factor; every number is either derived from GIS/GTFS/census inputs or calibrated against real observed performance.
+This is the centre of the game and its main claim to realism. **The decisions
+of the player make the ridership, the revenue, and the congestion. The
+algorithms are the same class that a real Metropolitan Planning Organization
+uses.** The method is the standard **four-step travel demand model**: trip
+generation, then distribution, then mode choice, then assignment. A
+**calibration layer** connects each coefficient to observed data. No number
+here is a designer estimate. Each number comes from the GIS, GTFS, or census
+inputs, or from a calibration against real observed performance.
 
 ```mermaid
 flowchart TB
@@ -373,36 +606,80 @@ flowchart TB
     OUT -. "congested skims (equilibrium loop)" .-> G2
 ```
 
-The pipeline runs in **two regimes** off the *same* calibrated coefficients: a fast **static** pass for planning-time forecasts (seconds → the number-with-confidence-bands the player sees while drawing a line), and the full **dynamic agent pass** at runtime (the §4.3 tick). The gap between them is the Forecast Accuracy score (§2.5).
+The pipeline operates in **two modes**, from the *same* calibrated
+coefficients:
 
-#### 4.1.1 From GIS to Zones — building the demand substrate
+- A fast **static** pass for a forecast at planning time. It takes seconds. It
+  gives the number with confidence bands that the player sees during the
+  drawing of a line.
+- A full **dynamic agent** pass at run time. This is the tick of §4.3.
 
-The city is partitioned into **census tracts** acting as **Traffic Analysis Zones (TAZ)** — the same geography the demand data is published on, and the conventional TAZ basis in real-world travel demand modelling.
+The difference between the two is the forecast accuracy score (§2.5).
 
-> **Revised in Phase 1** (was: H3 hexes, res ~9). Tracts won on three counts: the census/LODES inputs are *already* tract-indexed, so no lossy centroid-into-hex reaggregation step is needed; tract boundaries follow real features (rivers, freeways, rail), so the demand layer reads as the actual city rather than a honeycomb; and tracts are the standard TAZ unit, which keeps the §4.1.6 calibration comparable to published models. The cost is real and should be tracked: hexes are equal-area and uniformly subdividable, which tracts are not. Two consequences — (a) tracts are drawn to hold roughly *equal population*, so any choropleth over them must encode **density**, not raw counts, or it reads flat (already handled in the renderer); (b) the §6.3 level-of-detail plan of "coarser H3 when zoomed out" no longer has a free hierarchy and must instead aggregate tracts → block groups → counties, or reintroduce a hex grid purely as a rendering LOD.
+#### 4.1.1 From the GIS data to the zones
 
-Each zone's attributes are computed by spatial join over the ingested layers:
+The pipeline divides the city into **census tracts**. These tracts are the
+**traffic analysis zones (TAZ)**. The demand data already uses this geometry,
+and a tract is the usual TAZ unit in real travel demand work.
 
-- **Population** from the census, then **dasymetrically refined** — redistributed onto actual OSM building footprints weighted by `building:levels`, so residents sit where buildings actually are rather than smeared uniformly across the tract polygon.
-- **Employment** from LODES/land-use, segmented by sector (office / retail / industrial / institutional).
-- **Attraction mass** from OSM POIs, weighted by category (a hospital or university generates far more trip-ends than a corner shop).
-- **Car ownership & income** proxies from census — these drive the mode-choice model per segment.
-- **Network skims:** for every O/D pair the pipeline precomputes **level-of-service matrices** (in-vehicle time, wait, walk-access, fare, transfer count) per mode, using the routing algorithms in §4.1.5. These "skims" are the shared currency that feeds distribution and mode choice.
+> **Phase 1 changed this.** Before, the zones were H3 hexes at approximately
+> resolution 9. Tracts are better for three reasons. First, the census and
+> LODES inputs *already* use tracts, thus no step must move a centroid into a
+> hex and lose data. Second, a tract boundary follows a real feature, such as a
+> river, a freeway, or a rail line. Thus the demand layer looks like the real
+> city and not like a honeycomb. Third, a tract is the standard TAZ unit, thus
+> the calibration of §4.1.6 stays comparable with published models.
+>
+> This change has a real cost, and the team must record it. A hex has an equal
+> area and it divides uniformly. A tract does not. There are two results.
+> **(a)** A tract holds approximately the same population as another tract.
+> Thus a choropleth above the tracts must show the **density**, not the raw
+> count. If it shows the raw count, the map looks flat. The renderer already
+> does this. **(b)** The level-of-detail plan of §6.3 said "use a coarser H3
+> resolution when the zoom is low". That hierarchy is no longer free. The plan
+> must instead group the tracts into block groups and then counties. Or it must
+> add a hex grid again, for the rendering only.
 
-#### 4.1.2 Step 1 — Trip Generation (how many trips a zone emits/attracts)
+A spatial join across the ingested layers gives the attributes of each zone:
 
-Productions `Pᵢ` and attractions `Aⱼ` are computed per **trip purpose** (Home-Based Work, Home-Based Other, Non-Home-Based) via cross-classification / regression on real trip-rate tables (NHTS-style rates as priors):
+- **The population** comes from the census. Then a **dasymetric** step refines
+  it. This step moves the population onto the real OSM building footprints and
+  weights it by `building:levels`. Thus the residents are where the buildings
+  are. They are not uniform across the tract.
+- **The employment** comes from LODES or the land use. It has sectors: office,
+  retail, industrial, and institutional.
+- **The attraction mass** comes from the OSM points of interest, with a weight
+  for each category. A hospital or a university makes many more trips than a
+  small shop.
+- **The car ownership and the income** come from the census. These control the
+  mode choice for each group of persons.
+- **The network skims.** The pipeline calculates a **level-of-service matrix**
+  for each origin and destination pair, for each mode. The matrix contains the
+  in-vehicle time, the wait, the walk access, the fare, and the transfer count.
+  The routing algorithms of §4.1.5 make these skims. The skims are the common
+  input to the distribution step and the mode choice step.
+
+#### 4.1.2 Step 1 — trip generation
+
+The productions `Pᵢ` and the attractions `Aⱼ` are calculated for each **trip
+purpose**. The purposes are Home-Based Work, Home-Based Other, and
+Non-Home-Based. The method is a cross-classification or a regression on real
+trip-rate tables. The NHTS rates are the priors.
 
 ```
 Pᵢ = Σ_purpose  households(i) · trip_rate(purpose, income_band, car_ownership)
 Aⱼ = Σ_purpose  a0 + a1·jobs(j) + a2·retail(j) + a3·school_seats(j) + a4·poi_mass(j)
 ```
 
-Time-of-day factors then split daily totals into peak / midday / off-peak bands. **Urban density enters here directly** — the demand heatmap the player reads *is* this generation field, and dense mixed-use zones both emit and attract far more trips.
+Time-of-day factors then divide the daily totals into the peak band, the middle
+band, and the off-peak band. **The urban density enters the model here.** The
+demand heatmap that the player reads *is* this generation field. A dense zone
+with mixed use makes and attracts many more trips.
 
-#### 4.1.3 Step 2 — Trip Distribution (who travels where)
+#### 4.1.3 Step 2 — trip distribution
 
-A **doubly-constrained gravity model** links productions to attractions, solved by **Iterative Proportional Fitting (Furness / IPF)**:
+A **doubly-constrained gravity model** connects the productions to the
+attractions. **Iterative proportional fitting (Furness, or IPF)** solves it.
 
 ```
 T_ij = aᵢ · bⱼ · Pᵢ · Aⱼ · f(c_ij)        f(c_ij) = exp(−β · c_ij)   # deterrence function
@@ -412,11 +689,19 @@ iterate until convergence (balances the matrix to both margins):
    bⱼ = 1 / Σᵢ ( aᵢ · Pᵢ · f(c_ij) )      # column balancing → matches Aⱼ
 ```
 
-`c_ij` is the generalized cost drawn from the skims; `β` (travel friction) is **calibrated per city** (§4.1.6). Output: the **O/D flow matrix** — total person-trips that want to move between every zone pair, *mode-agnostic*. High-`Aⱼ` clusters reachable at low `c_ij` capture the most trips — the game's central spatial puzzle.
+The value `c_ij` is the general cost from the skims. The value `β` is the
+travel friction, and the pipeline **calibrates it for each city** (§4.1.6).
 
-#### 4.1.4 Step 3 — Mode Choice (car vs. transit vs. active)
+The output is the **origin and destination flow matrix**. It gives the total
+person trips between each pair of zones. It does not give the mode. A group of
+zones with a high `Aⱼ` and a low `c_ij` gets the most trips. This is the
+central spatial problem of the game.
 
-A **nested multinomial logit** model converts each O/D flow into mode shares from a **utility** (negative generalized cost) per mode:
+#### 4.1.4 Step 3 — mode choice
+
+A **nested multinomial logit** model changes each flow into a share for each
+mode. The input is the **utility** of each mode, which is the negative general
+cost.
 
 ```
 U_m = ASC_m + β_t·(in-vehicle time) + β_w·wait + β_a·access/egress
@@ -425,32 +710,80 @@ U_m = ASC_m + β_t·(in-vehicle time) + β_w·wait + β_a·access/egress
 P(m) = exp(U_m / μ) / Σ_k exp(U_k / μ)      # nested: {car, transit} vs {walk, cycle}
 ```
 
-- **Value of Time (VOT)** converts money ↔ minutes and is **segmented by income** (from census), so a fare change hits low-income riders' choice differently than a wealthy commuter's — the substrate for the equity mandate.
-- **Alternative-Specific Constants (ASC)** and the `β` weights are **calibrated to observed mode shares**.
-- **This is the step where every build parameter turns into ridership:** shorter headways cut `wait`, better-placed portals cut `access`, better hubs cut `transfer penalty`, longer/wider-door trains cut `crowding` — each raising transit's `U_m` and therefore its captured share. The "▸ why?" panel (§5.4) exposes exactly which term moved.
+- **The value of time (VOT)** changes money into minutes. It has a different
+  value for each income group, from the census. Thus a fare change has a
+  different effect on a passenger with a low income and on a passenger with a
+  high income. This is the base of the equity mandate.
+- The **alternative-specific constants (ASC)** and the `β` weights come from a
+  **calibration against the observed mode shares**.
+- **This step changes each build parameter into ridership.** A shorter headway
+  decreases the `wait`. A better entrance position decreases the `access`. A
+  better hub decreases the transfer penalty. A longer train with wider doors
+  decreases the `crowding`. Each of these increases the `U_m` of transit and
+  thus its share. The "▸ why?" panel (§5.4) shows which term changed.
 
-#### 4.1.5 Step 4 — Assignment (which routes and roads carry the flow)
+#### 4.1.5 Step 4 — assignment
 
-- **Transit assignment.** The static pass uses the **optimal-strategies / hyperpath** model (Spiess–Florian): a passenger boards the first attractive line among a set, and flow splits by relative frequency — the correct way to model waiting when several lines serve a stop. Exact timetable routing (for skims, isochrones, and the dynamic pass) uses **RAPTOR** (Round-Based Public Transit Router) and the **Connection Scan Algorithm (CSA)** for earliest-arrival paths. Assignment is **capacity-constrained**: once boardings approach crush capacity, effective frequency drops and passengers wait for the next service (this is what produces crowding and left-behinds).
-- **Road assignment.** Background car trips (and buses/trams) load the road graph at **static user equilibrium** (Wardrop's principle) solved by the **Frank–Wolfe** algorithm, with the **BPR** volume-delay function (§4.2). Congested link times feed straight back into the skims — so building rail that relieves a road corridor is visible as reduced car time *and* the induced demand that follows.
-- **Fast routing backends.** Millions of shortest-path queries per forecast are made tractable in-browser by **Contraction Hierarchies** and **A\* with landmarks (ALT)** for road, and RAPTOR's round-pruning for transit.
+- **Transit assignment.** The static pass uses the **optimal strategies**
+  model, which is also the **hyperpath** model of Spiess and Florian. A
+  passenger gets on the first attractive line of a set, and the flow divides by
+  the relative frequency. This is the correct method when several lines serve
+  one stop. The exact timetable routing uses **RAPTOR** (Round-Based Public
+  Transit Router) and the **Connection Scan Algorithm (CSA)** for the earliest
+  arrival. The skims, the isochrones, and the dynamic pass use this routing.
+  The assignment has a **capacity limit**. When the boardings approach the
+  crush capacity, the effective frequency decreases and the passengers wait for
+  the next service. This makes the full vehicles and the passengers who stay
+  behind.
+- **Road assignment.** The background car trips, and also the buses and the
+  trams, load the road graph at **static user equilibrium**, which is Wardrop's
+  principle. The **Frank–Wolfe** algorithm solves it, with the **BPR**
+  volume-delay function (§4.2). The congested link times then go back into the
+  skims. Thus a new rail line that relieves a road corridor is visible as a
+  shorter car time. The new demand that follows is also visible.
+- **Fast routing.** One forecast needs millions of shortest-path queries. Two
+  methods make this possible in a browser:
+  - For the road: **contraction hierarchies**, and **A\* with landmarks
+    (ALT)**.
+  - For the transit: the round pruning of RAPTOR.
 
-#### 4.1.6 Calibration — the step that earns "data-driven"
+#### 4.1.6 Calibration
 
-Calibration is what makes the outputs *real* rather than plausible-looking:
+The calibration makes the outputs *real*. Without it, they only look
+reasonable.
 
-1. **Seed + IPF.** Build a seed O/D matrix and IPF it to census marginals.
-2. **OD Matrix Estimation (ODME).** Solve a bi-level optimization that nudges the seed matrix until the **assigned** boardings and link volumes reproduce the **observed** counts from GTFS-RT / Automatic Passenger Counters (APC). This anchors *where* demand actually is.
-3. **Coefficient fitting.** Tune the gravity `β`, mode-choice `ASC`s and `β` weights, and VOT by minimizing error against observed mode shares and per-line boardings, using gradient descent / **SPSA** / Nelder–Mead.
-4. **Goodness-of-fit gate.** Accept the calibration only when the **GEH statistic** is `< 5` on the majority of links and boarding totals fall within tolerance — the same acceptance standard traffic engineers apply.
+1. **Seed and IPF.** Make a seed matrix, then use IPF to fit it to the census
+   margins.
+2. **Origin-destination matrix estimation (ODME).** Solve a two-level
+   optimization. It moves the seed matrix until the **assigned** boardings and
+   link volumes agree with the **observed** counts from GTFS-RT and from
+   automatic passenger counters (APC). This fixes *where* the demand is.
+3. **Coefficient fitting.** Tune the gravity `β`, the mode-choice `ASC` values,
+   the `β` weights, and the VOT. Decrease the error against the observed mode
+   shares and the boardings for each line. The methods are gradient descent,
+   **SPSA**, and Nelder–Mead.
+4. **The acceptance gate.** Accept the calibration only when the **GEH
+   statistic** is `< 5` on most of the links, and the boarding totals are in
+   the tolerance. Traffic engineers use the same standard.
 
-The result is the `calibration.json` coefficient set (§1.4) that is *known to reproduce the real city's* boardings, speeds, and farebox. **All player edits perturb outward from this calibrated baseline**, which is precisely why the game can claim accuracy.
+The result is the coefficient set in `calibration.json` (§1.4). This set is
+*known to reproduce the real boardings, speeds, and farebox of the city*. **Each
+change by the player moves away from this calibrated start condition.** This is
+why the game can claim its accuracy.
 
-**Confidence bands (the forecast's ±):** computed by (a) bootstrapping over calibration residuals and (b) widening by **extrapolation distance** — the Mahalanobis distance of the proposal's corridor (its density, land-use, existing service) from the envelope the calibration actually observed. Infill in a dense, well-instrumented corridor → tight bands; a line into greenfield → wide bands. This is the honest-uncertainty mechanic behind §2.5.
+**The confidence bands.** Two methods give the ± value of a forecast. First, a
+bootstrap across the calibration residuals. Second, a widening by the
+**extrapolation distance**. This distance is the Mahalanobis distance between
+the corridor of the proposal and the conditions that the calibration observed.
+The corridor properties are its density, its land use, and its existing
+service. A new station in a dense corridor with much data gives narrow bands. A
+line into an empty area gives wide bands. This is the honest-uncertainty
+mechanic of §2.5.
 
-#### 4.1.7 From Ridership to Revenue
+#### 4.1.7 From the ridership to the revenue
 
-Boardings and completed trips convert to money through the **fare engine**, which reads the same fare policy the player sets in the tactical loop:
+The boardings and the completed trips become money in the **fare engine**. The
+engine reads the same fare policy that the player sets in the tactical loop.
 
 ```
 fare(trip) =  flat      → constant per boarding
@@ -461,22 +794,54 @@ fare(trip) =  flat      → constant per boarding
 revenue = Σ_trips fare(trip) · (1 − evasion_rate) + ancillary(advertising, retail, parking)
 ```
 
-- **Fare elasticity.** Changing fares feeds back into mode choice via a short-run **fare elasticity** (≈ −0.3 typical): raise fares and some riders shift to car/active modes. Fare policy is therefore a genuine revenue-vs-ridership-vs-equity tradeoff, not a free money lever.
-- **Revenue apportionment.** When a journey crosses operators or authorities (relevant in competitive multiplayer, §7), fare revenue is split per leg by distance — mirroring real interavailable-ticketing settlement.
-- **Cost side.** Operating cost accrues per vehicle-km / vehicle-hour, plus **energy taken straight from the traction physics** (§3.2 rolling stock), plus crew and maintenance accrual. **Farebox recovery = revenue ÷ operating cost**, the headline economic KPI.
+- **The fare elasticity.** A fare change goes back into the mode choice through
+  a short-term **fare elasticity**. A usual value is approximately −0.3. If the
+  player increases the fare, some passengers change to the car or to an active
+  mode. Thus the fare policy is a real compromise between the revenue, the
+  ridership, and the equity. It is not free money.
+- **The division of the revenue.** A journey can cross two operators or two
+  authorities. This is important in competitive multiplayer (§7). The game then
+  divides the fare revenue for each leg by distance. This agrees with real
+  ticket settlement.
+- **The cost.** The operating cost increases with each vehicle-km and each
+  vehicle-hour. The **energy comes directly from the traction physics** of the
+  rolling stock (§3.2). Add the crew cost and the maintenance. **The farebox
+  recovery is the revenue divided by the operating cost.** It is the primary
+  economic KPI.
 
-#### 4.1.8 Feedback, Equilibrium & the Static/Dynamic Split
+#### 4.1.8 The feedback loop and the static/dynamic difference
 
-Steps 2–4 are **iterated to network equilibrium** (method of successive averages): assignment produces congested skims → those change distribution and mode choice → re-assign → repeat until stable. **Induced demand is exactly this loop** — a faster, less-crowded network lowers `c_ij`, which pulls new trips into the O/D matrix over subsequent cycles, and can quietly erode the very improvement that created it if capacity isn't scaled.
+Steps 2 to 4 **repeat until the network is at equilibrium**. The method is the
+method of successive averages. The assignment gives congested skims. Those
+skims change the distribution and the mode choice. Then the model assigns
+again. This continues until the result is stable.
 
-- **Static regime (forecast):** the equilibrium four-step, converged in ~seconds, yields the planning-time ridership/revenue number with confidence bands.
-- **Dynamic regime (realized):** the §4.3 agent tick replays demand across the simulated day with *real* vehicle capacity, crowding disutility, bunching, and reliability draws — passenger flow packets that **spawn, wait, board (or get left behind), transfer, and can balk or re-route**. The delta between the static forecast and the dynamic realized outcome is the accuracy score of §2.5.
+**New demand is exactly this loop.** A faster network with fewer passengers on
+board decreases `c_ij`. A lower `c_ij` pulls new trips into the matrix in the
+next cycle. These new trips can slowly remove the improvement that made them,
+if the player does not add more capacity.
 
-### 4.2 Traffic Congestion
+- **The static mode (the forecast):** the four-step equilibrium converges in
+  approximately seconds. It gives the ridership number and the revenue number
+  with the confidence bands, at planning time.
+- **The dynamic mode (the real result):** the agent tick of §4.3 plays the
+  demand across the simulated day. It uses the *real* vehicle capacity, the
+  disutility of a full vehicle, the vehicles that collect together, and the
+  reliability draws. The passenger flow packets start, wait, get on or stay
+  behind, transfer, and can stop the trip or select a new route.
 
-Congestion is modeled on two coupled networks — **road** and **transit** — because they interact (buses share roads; road congestion pushes mode share toward transit; transit crowding pushes it back).
+The difference between the static forecast and the dynamic result is the
+accuracy score of §2.5.
 
-**Road congestion — macroscopic flow model.** Rather than simulate every car (too costly for a full city in-browser), roads use a **mesoscopic link-based model** with a volume–delay function:
+### 4.2 Traffic congestion
+
+The model has two connected networks: the **road** and the **transit**. They
+interact. A bus shares a road. Road congestion moves the mode share to transit.
+Full transit vehicles move it back.
+
+**Road congestion — a macroscopic flow model.** The engine does not simulate
+each car. That is too expensive for a full city in a browser. The roads use a
+**mesoscopic model for each link**, with a volume-delay function.
 
 ```
 travel_time(link) = t_free · [ 1 + α · (V / C)^γ ]      # BPR function
@@ -484,22 +849,27 @@ travel_time(link) = t_free · [ 1 + α · (V / C)^γ ]      # BPR function
      α, γ = calibrated congestion sensitivity
 ```
 
-- Background car traffic is derived from the O/D matrix's non-transit trips, assigned to the road graph at equilibrium.
-- **Buses/trams on shared road links inherit the link delay** — so road congestion *directly degrades surface-transit reliability*, and building dedicated bus lanes or grade-separating a tram becomes a legible, quantified investment decision.
-- Signalized intersections use simplified capacity reductions; key corridors can be inspected as flow diagrams.
+- The background car traffic comes from the non-transit trips in the matrix.
+  The model assigns them to the road graph at equilibrium.
+- **A bus or a tram on a shared road link gets the link delay.** Thus road
+  congestion *directly decreases the reliability of a surface transit service*.
+  Thus a dedicated bus lane, or the grade separation of a tram, becomes an
+  investment decision that the player can measure.
+- An intersection with signals uses a simple decrease of the capacity. The
+  player can examine a primary corridor as a flow diagram.
 
-**Congestion scenarios the engine handles:**
+**The congestion conditions that the engine models:**
 
-| Scenario | Model behavior |
+| Condition | The behaviour of the model |
 |---|---|
-| **Recurrent peak congestion** | V/C rises predictably in AM/PM bands; surface transit slows; demand shifts to grade-separated rail if available. |
-| **Incident/blockage** | A link's capacity `C` drops (crash, closure); flow reroutes on the road graph; spillback modeled by capacity propagation to upstream links. |
-| **Transit crowding congestion** | When boardings exceed vehicle crush capacity, passengers are **left behind** to the next service; wait times compound; dwell times inflate (door throughput bound), causing **bunching**. |
-| **Station-level congestion** | Egress capacity (§3.2) exceeded → platform crowding → safety-limited boarding → feedback into dwell and demand. |
-| **Bunching / cascade** | A delayed vehicle picks up more passengers → longer dwell → falls further behind while the following vehicle catches up. Emergent from the dwell/headway model, not scripted. Mitigated by holding strategies the player can enable. |
-| **Induced demand** | Improved transit lowers `c_ij`, which raises `T_ij` in the next generation cycle — new riders appear over time, and can erode the very improvement if capacity isn't scaled. |
+| **Usual peak congestion** | V/C increases at the usual times in the morning and the evening. The surface transit becomes slow. If a grade-separated rail line is available, the demand moves to it. |
+| **An incident or a blockage** | The capacity `C` of a link decreases, because of a crash or a closure. The flow finds a new route on the road graph. The model propagates the queue to the links behind it. |
+| **Full transit vehicles** | The boardings are more than the crush capacity. The passengers **stay behind** for the next service. The wait times increase. The dwell times increase, because the doors limit the flow. Thus the vehicles **collect together**. |
+| **Congestion in a station** | The exit capacity (§3.2) is not enough. The platform becomes full. Safety limits the boarding. This goes back into the dwell time and the demand. |
+| **Vehicles that collect together** | A late vehicle collects more passengers. Then its dwell is longer, and it becomes more late. The vehicle behind it comes closer. This comes out of the dwell and headway model. It is not a script. A holding strategy that the player enables can decrease it. |
+| **New demand** | Better transit decreases `c_ij`. Thus `T_ij` increases in the next generation cycle. New passengers appear with time. They can remove the improvement, if the player does not add more capacity. |
 
-### 4.3 The Simulation Tick
+### 4.3 The simulation tick
 
 ```mermaid
 flowchart TB
@@ -517,20 +887,31 @@ flowchart TB
     S9 -- "next tick" --> START
 ```
 
-**Determinism:** all stochastic draws use a seeded PRNG stored in the sim state, so a given save + input sequence reproduces exactly — essential for the accuracy model, replays, and challenge scenarios.
+**Determinism:** each random draw uses a PRNG with a seed in the simulation
+state. Thus one save and one sequence of inputs always give the same result.
+This is necessary for the accuracy model, the replays, and the challenge
+scenarios.
 
 ---
 
-## 5. User Interface (UI/UX)
+## 5. The user interface
 
-The UI's mandate: **expose a high-dimensional control surface while keeping the map — the primary information display — unobstructed.** The design is a **contextual, layered HUD**, not a permanent wall of panels.
+The mandate of the interface is this: **show a control surface with many
+dimensions, but keep the map clear.** The map is the primary display. The
+design is a **contextual HUD in layers**. It is not a permanent wall of panels.
 
-### 5.1 Layout Philosophy
+### 5.1 The layout philosophy
 
-- **Map-first.** The geospatial view (deck.gl) is the canvas and occupies ~100% of the viewport. Panels are translucent overlays that appear on demand and dismiss cleanly.
-- **Progressive disclosure.** Three depth tiers: *Glance* (always-on strip), *Focus* (contextual panel), *Deep* (full analysis modal). The player descends only as far as the task requires.
-- **One primary panel at a time.** Opening a Focus panel dims and collapses others. No stacking of five floating windows.
-- **Data-ink discipline.** Every pixel of chrome earns its place; heavy use of sparklines, small multiples, and inline microcharts instead of large dashboards.
+- **The map is first.** The deck.gl view is the canvas, and it fills
+  approximately 100% of the screen. A panel is a translucent overlay. It
+  appears when the player needs it, and it goes away cleanly.
+- **Show the detail in steps.** There are three levels. *Glance* is the
+  permanent strip. *Focus* is the contextual panel. *Deep* is the full analysis
+  window. The player goes only as deep as the task needs.
+- **One primary panel at a time.** A new Focus panel makes the other panels
+  dark and small. Five floating windows are not possible.
+- **Each pixel must have a use.** Use sparklines, small multiples, and small
+  charts in the text. Do not use large dashboards.
 
 ```
 ┌───────────────────────────────────────────────────────────────────────┐
@@ -551,26 +932,37 @@ The UI's mandate: **expose a high-dimensional control surface while keeping the 
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
-### 5.2 The Glance Tier — Always-On Strip
+### 5.2 The Glance level — the permanent strip
 
-A single top strip carries only what must be permanently visible:
-- **Time controls** (pause / 0.5× / 1× / fast) and the simulated clock/date.
-- **Financial pulse:** capital balance, operating balance trend (sparkline), farebox recovery.
-- **Four mandate KPIs:** ridership, coverage, reliability (OTP), average crowding — each a compact gauge that turns amber/red on threshold breach and is *clickable* to open its analysis.
+One strip at the top holds only the data that must always be visible.
 
-### 5.3 The Left Rail — Mode Switcher
+- **The time controls** (pause, 0.5×, 1×, fast) and the clock and date of the
+  simulation.
+- **The financial state:** the capital balance, the trend of the operating
+  balance as a sparkline, and the farebox recovery.
+- **The four mandate KPIs:** the ridership, the coverage, the reliability
+  (OTP), and how full the vehicles are. Each KPI is a small gauge. It becomes
+  amber or red at a limit. The player can click it to open its analysis.
 
-A slim vertical icon rail selects the **operating mode**, which reconfigures the map's interaction model and available tools:
+### 5.3 The left rail — the mode selector
 
-- **Inspect** (default) — click any vehicle/station/line to open its Focus panel.
-- **Plan / Build** — line-drawing, station placement, alignment tools; enters a "planning canvas" with cost/forecast readout.
-- **Operate** — service tuning: headways, fleet assignment, fares.
-- **Analyze** — full-screen data overlays and reports.
-- **Finance** — budget, bonds, grants, fare policy.
+A thin vertical rail of icons selects the **operating mode**. The mode changes
+how the map reacts and which tools are available.
 
-### 5.4 The Focus Panel — Contextual Deep Control
+- **Inspect** (the default). Click a vehicle, a station, or a line to open its
+  Focus panel.
+- **Plan / Build.** The tools to draw a line, place a station, and select an
+  alignment. This mode shows a planning canvas with the cost and the forecast.
+- **Operate.** The service controls: the headways, the fleet assignment, and
+  the fares.
+- **Analyze.** Full-screen data overlays and reports.
+- **Finance.** The budget, the bonds, the grants, and the fare policy.
 
-Selecting an object opens a right-docked panel scoped to *that object*, using tabs to hold granularity without clutter. Example — **a Line** selected:
+### 5.4 The Focus panel
+
+When the player selects an object, a panel opens at the right. The panel shows
+only *that object*. Tabs hold the detail and keep the panel clean. The example
+below shows a **line**.
 
 ```
 ┌─ LINE 3 · "Riverside" ──────────────────────[ ─ ][ × ]┐
@@ -588,87 +980,166 @@ Selecting an object opens a right-docked panel scoped to *that object*, using ta
 └────────────────────────────────────────────────────────┘
 ```
 
-- Tabs mean a single panel exposes *dozens* of parameters without ever showing them all at once.
-- **Sliders with live forecast:** dragging a headway slider updates a projected KPI delta *before* committing, with the static-assignment forecaster running in the background.
-- **Traceability affordance:** every KPI has a "▸ why?" disclosure that shows the causal inputs from the model (satisfying the Legible Complexity pillar). No number is a black box.
+- The tabs let one panel show *many* parameters, but never all of them at the
+  same time.
+- **The sliders show a live forecast.** When the player moves a headway slider,
+  the panel shows the calculated change of the KPI *before* the commit. The
+  static forecaster operates in the background.
+- **The player can trace each value.** Each KPI has a "▸ why?" control. It
+  shows the inputs from the model that made the value. This satisfies the
+  legible complexity pillar. No number is hidden.
 
-### 5.5 Spatial Overlays (Bottom Toggles)
+### 5.5 The map overlays
 
-The map itself is the richest analytical instrument. Toggleable deck.gl overlays include:
-- **Demand heatmap** — the generation field (§4.1); the "where are the trips" view.
-- **Unmet-demand** — trips that *want* transit but have no good option; the opportunity map.
-- **Coverage isochrones** — walk-access catchments from station portals.
-- **Congestion** — road V/C and transit crowding as a diverging color scale.
-- **Flow ribbons** — line-thickness-encoded passenger volumes (deck.gl `PathLayer`/`TripsLayer`).
-- **Accessibility/equity** — job access within X minutes by tract, for mandate tracking.
+The map is the best analysis instrument. The player can switch these deck.gl
+overlays on and off.
 
-Overlays are mutually aware (a legend arbitrates color space) and never more than two active at once to preserve legibility.
+- **The demand heatmap.** This is the generation field of §4.1. It shows where
+  the trips are.
+- **The unmet demand.** These are the trips that *want* transit but have no
+  good option. This is the map of the opportunities.
+- **The coverage isochrones.** These are the walk catchments from the station
+  entrances.
+- **The congestion.** The road V/C and the transit load, on a two-colour scale.
+- **The flow ribbons.** The thickness of a line shows the passenger volume. The
+  deck.gl `PathLayer` and `TripsLayer` draw them.
+- **The accessibility and equity.** The number of jobs that a tract can reach in
+  X minutes. This tracks the mandate.
 
-### 5.6 Build Mode & the 3D Inspector
+The overlays know about each other, and a legend controls the colour space.
+Never more than two overlays are active at the same time. Thus the map stays
+legible.
 
-In **Plan/Build**, station-level editing drops into a **Three.js inspector** (embedded as a deck.gl layer) for true-3D placement of platforms, portals, and vertical circulation, with live footprint/cost feedback and pedestrian-access preview. The player zooms seamlessly from city scale (2.5D deck.gl) to a single station's mezzanine (3D) — one continuous camera, two render systems.
+### 5.6 The build mode and the 3D editor
 
-### 5.7 Accessibility & Ergonomics
+In **Plan/Build** mode, the editing of a station opens a **Three.js editor**.
+It is a deck.gl layer. It gives true 3D positions for the platforms, the
+entrances, and the stairs and lifts. It shows the footprint, the cost, and a
+preview of the pedestrian access. The player changes the zoom continuously from
+the city (2.5D deck.gl) to one station mezzanine (3D). There is one camera and
+two render systems.
 
-- Full keyboard navigation; command palette (`⌘K`) for power users to jump to any object/tool.
-- Colorblind-safe overlay palettes (validated), with pattern encodings as backup.
-- All time-critical information also available as text/number, never color-only.
-- Panels are resizable and dockable; layouts persist per user.
+### 5.7 Accessibility
+
+- Full keyboard navigation. A command palette (`⌘K`) lets an expert player go
+  to any object or tool.
+- Overlay palettes that are safe for a person with a colour vision deficiency.
+  The team validates them. A pattern is the backup signal.
+- All time-critical data is also available as text or a number. It is never in
+  a colour only.
+- The player can change the size of a panel and its position. The layout stays
+  for that user.
 
 ---
 
-## 6. Cross-Cutting Concerns
+## 6. Items that cross the full design
 
-### 6.1 Performance Budget
+### 6.1 The performance budget
 
 | Target | Budget |
 |---|---|
-| Render frame time | ≤ 16.6 ms (60 fps) with 5k+ visible vehicles |
-| Sim tick (worker) | ≤ 30 ms at 4 Hz for a mid-size city |
-| Static forecast (planning feedback) | ≤ 300 ms perceived |
-| World bundle initial load | ≤ 8 s on broadband (progressive: basemap first, sim graph streamed) |
-| Memory ceiling (client) | ≤ ~1.5 GB (WASM linear memory + GPU buffers) |
+| Frame time | ≤ 16.6 ms (60 fps), with more than 5k visible vehicles |
+| Simulation tick (in the worker) | ≤ 30 ms at 4 Hz, for a medium city |
+| Static forecast (the planning feedback) | ≤ 300 ms, as the player sees it |
+| First load of the world bundle | ≤ 8 s on broadband. The basemap comes first, and the simulation graph streams after it. |
+| Client memory limit | ≤ approximately 1.5 GB (the WASM memory and the GPU buffers) |
 
-Scaling to large metros: **level-of-detail** demand aggregation (tracts → block groups → counties when zoomed out; census geography nests, so the hierarchy is free even though it is not equal-area — see the §4.1.1 note), flow-packet aggregation instead of per-passenger agents, and viewport-culled rendering.
+To reach a large city, use three methods. First, group the demand by a **level
+of detail**: the tracts, then the block groups, then the counties, when the
+zoom decreases. The census geography nests, thus this hierarchy is free. But it
+is not equal in area. See the note in §4.1.1. Second, group the flow packets
+instead of one agent for each passenger. Third, draw only the objects in the
+viewport.
 
-### 6.2 Data Provenance, Licensing & Ethics
+### 6.2 Data licences and ethics
 
-- **OSM** (ODbL) and **GTFS** feeds carry attribution/share-alike obligations — surfaced in an in-game credits/data panel; derived world bundles respect ODbL.
-- **No PII:** census/demographic inputs are used only at aggregated tract/cell level.
-- **Equity as a design value:** the game explicitly models and rewards equitable access (job access for low-income tracts), rather than treating ridership maximization as the sole goal — a deliberate stance for a "serious" civic simulation.
+- **OSM** (ODbL) and the **GTFS** feeds need an attribution, and ODbL is a
+  share-alike licence. The game shows the attribution in a credits panel. The
+  derived world bundles obey ODbL.
+- **There is no personal data.** The census and demographic inputs operate only
+  at the level of a tract or a cell.
+- **Equity is a design value.** The game models fair access and gives a reward
+  for it. An example is the job access for a tract with a low income. The game
+  does not treat the maximum ridership as the only goal. This is a deliberate
+  decision for a serious civic simulation.
 
-### 6.3 Save / Load / Determinism
+### 6.3 The save, the load, and the determinism
 
-Saves are compact binary snapshots of the deterministic sim state + input log, versioned against the world bundle version. This enables reproducible replays, shareable scenarios, and fair leaderboards on identical baked worlds.
+A save is a compact binary snapshot of the deterministic simulation state, plus
+the log of the inputs. It has a version, and the version agrees with the
+version of the world bundle. Thus a replay is reproducible, a scenario is
+shareable, and a leaderboard is fair, because each player has the same baked
+world.
 
 ---
 
-## 7. Multiplayer & Shared Worlds
+## 7. Multiplayer and shared worlds
 
-Multiplayer is a natural extension rather than a bolt-on, because the two foundations the single-player engine already rests on are exactly the two properties networked simulation needs: a **deterministic, command-driven kernel** (§6.3) and **byte-identical baked worlds** (§1.4). Since the same world bundle plus the same seeded kernel produce identical results for everyone, the network only has to agree on the **stream of player commands** — not on megabytes of world state. Three multiplayer pillars sit on one shared netcode foundation.
+Multiplayer is a natural extension. It is not an addition at the end. The
+single-player engine already has the two properties that a networked simulation
+needs. First, a **deterministic kernel that commands control** (§6.3). Second,
+**baked worlds that are identical byte for byte** (§1.4). The same world bundle
+and the same seeded kernel give the same result for each player. Thus the
+network must agree only on the **sequence of player commands**. It does not
+have to send megabytes of world state. Three multiplayer modes use one netcode.
 
-### 7.1 Modes of Multiplayer
+### 7.1 The modes of multiplayer
 
-**A · Asynchronous — Leaderboards & Ghosts.**
-Everyone plays the same city + scenario seed solo, ranked on mandate KPIs (ridership, farebox recovery, equity, forecast accuracy). Because a save *is* a compact **command log** over a deterministic kernel, the server can **re-simulate any submission to verify the score** (structurally cheat-proof — the client can't fake an outcome the kernel wouldn't produce) and can render another player's network as a translucent **"ghost"** overlay for comparison and learning. Participation is unbounded and costs almost nothing to host.
+**A · Asynchronous — leaderboards and ghosts.**
+Each player plays the same city and the same scenario seed alone. The game puts
+the results in order by the mandate KPIs: the ridership, the farebox recovery,
+the equity, and the forecast accuracy. A save *is* a compact **command log**
+above a deterministic kernel. Thus the server can **simulate any submission
+again to examine the score**. A false score is not possible, because the client
+cannot make a result that the kernel would not make. The server can also draw
+the network of another player as a translucent **ghost** overlay, for
+comparison and learning. The number of players has no limit, and the cost to
+host it is very low.
 
-**B · Cooperative — Shared Authority.**
-2–4 players co-run one transit authority in a live session, dividing the org by function:
-- **Capital Planner** — draws alignments, places stations, commits construction.
-- **Operations Chief** — headways, rolling-stock rostering, depots, incident response.
-- **CFO** — budget, bonds, fare policy, grant applications.
+**B · Cooperative — a shared authority.**
+Two to four players operate one transit authority in a live session. They
+divide the organization by function:
 
-Role-based permissions gate who can spend what; a **shared audit log** records every action; and large capital commitments can be configured to require a **second approver**. All players observe one authoritative world state.
+- **The capital planner** draws the alignments, places the stations, and
+  commits the construction.
+- **The operations chief** controls the headways, the rolling stock, the
+  depots, and the response to an incident.
+- **The CFO** controls the budget, the bonds, the fare policy, and the grant
+  applications.
 
-**C · Competitive — Rival Operators on One Demand Field.**
-The most novel mode, and the one the data model uniquely enables. Multiple operators serve the **same calibrated O/D demand**, and the **mode-/route-choice model splits riders between them** by generalized cost — the very same mechanism that splits trips between car and transit (§4.1.4). Sub-variants:
-- **Open competition** — operators run overlapping services; the logit model assigns each rider to whichever offers lower generalized cost (fare, wait, speed, comfort). Undercut a rival's fare or out-frequency them and you capture share — while eroding your own farebox.
-- **Franchise / tender** — an infrastructure-manager role (or the game) auctions corridors or concessions; operators submit subsidy-minimizing or premium-maximizing bids (à la London/European franchising).
-- **Divided territory** — each player owns a region; they interface at **transfer hubs**, must negotiate **through-service** and **fare-revenue apportionment** (§4.1.7), and can levy **track-access / station charges** on one another (open-access rail economics).
+Role permissions control who can spend money. A **shared audit log** records
+each action. A large capital commitment can need a **second approval**. All the
+players see one authoritative world state.
 
-### 7.2 Netcode Architecture
+**C · Competitive — rival operators on one demand field.**
+This is the most unusual mode, and only this data model permits it. Two or more
+operators serve the **same calibrated demand**. The **mode-choice model and the
+route-choice model divide the passengers between them** by the general cost.
+This is the same mechanism that divides the trips between a car and transit
+(§4.1.4). There are three sub-modes:
 
-The governing design fact is that **planning is not twitch**: latency tolerance is high, but correctness and anti-cheat matter enormously. That rules out peer-to-peer lockstep-by-trust and points to a **server-authoritative simulation with a thin command protocol**.
+- **Open competition.** The operators run services above each other. The logit
+  model gives each passenger to the operator with the lower general cost. That
+  cost is the fare, the wait, the speed, and the comfort. Decrease the fare
+  below the fare of your rival, or increase the frequency above theirs, and you
+  get more share. But you also decrease your own farebox.
+- **Franchise or tender.** An infrastructure manager, which is a role or the
+  game, sells the corridors or the concessions. The operators make a bid. The
+  bid can minimize the subsidy or maximize the premium. This agrees with the
+  franchise systems of London and Europe.
+- **Divided territory.** Each player owns a region. The regions meet at the
+  **transfer hubs**. The players must agree about a **through service** and
+  about the **division of the fare revenue** (§4.1.7). They can also charge
+  each other for the **track access and the stations**. This is the economics of
+  open-access rail.
+
+### 7.2 The netcode architecture
+
+The controlling fact is this: **planning is not a fast reaction game.** Thus
+the tolerance for latency is high, but the correctness and the protection
+against cheats are very important. Peer-to-peer lockstep with trust is not
+possible. The correct design is a **simulation on the server, with a small
+command protocol**.
 
 ```mermaid
 flowchart TB
@@ -692,183 +1163,480 @@ flowchart TB
     AUTH <--> STORE
 ```
 
-- **Authoritative server sim.** The *same* Rust kernel, compiled **native** for the server instead of WASM, runs the canonical simulation for a session. Clients never own truth.
-- **Command protocol.** Clients send tiny **intents** (draw line, set headway, buy stock). The server **validates** (funds, legality, role permission), stamps them onto the deterministic timeline, and applies them. Because commands are small and sparse, uplink bandwidth is trivial.
-- **State streaming with interest management.** The server returns **delta-compressed** state — only changed vehicles/KPIs, and only within each client's **viewport / subscription** (spatial culling) — so per-client bandwidth stays bounded regardless of city size.
-- **Client-side prediction & reconciliation.** Each client runs a local copy of the deterministic kernel, applies its own commands immediately for a responsive UI, and reconciles against periodic authoritative snapshots. Because the kernel is deterministic, divergence is rare and reconciliation is cheap; other players' actions arrive as commands and replay identically on every client.
-- **Cross-platform determinism.** Native-server and WASM-client kernels must agree bit-for-bit; this is guaranteed with strictly-specified (or fixed-point) math and a shared seeded PRNG — the same discipline that already powers replays and leaderboard verification.
+- **The server owns the simulation.** The *same* Rust kernel operates on the
+  server, but compiled to native code, not to WASM. It gives the true
+  simulation for a session. A client never owns the truth.
+- **The command protocol.** A client sends a small **intent**, for example
+  "draw a line", "set a headway", or "buy stock". The server **examines** the
+  intent for the money, the legality, and the role permission. Then it puts the
+  intent on the deterministic timeline and applies it. The commands are small
+  and infrequent, thus the upload bandwidth is very small.
+- **The state stream has interest management.** The server sends **delta
+  compressed** state. It sends only the vehicles and the KPIs that changed, and
+  only in the **viewport** of each client. Thus the bandwidth for each client
+  has a limit, and the size of the city does not change it.
+- **The client predicts and then corrects.** Each client operates a local copy
+  of the deterministic kernel. It applies its own commands immediately, thus
+  the interface is fast. Then it corrects itself against the authoritative
+  snapshots. The kernel is deterministic, thus a difference is rare and the
+  correction is cheap. The actions of the other players arrive as commands, and
+  each client replays them identically.
+- **Determinism across platforms.** The native server kernel and the WASM
+  client kernel must agree bit for bit. Strictly specified math, or fixed-point
+  math, and one seeded PRNG give this agreement. The replays and the
+  verification of a leaderboard already need the same discipline.
 
-### 7.3 Time, Turns & Session Control
+### 7.3 The time and the session control
 
-Single-player pause / fast-forward can't apply to a shared world, so time control is arbitrated per mode:
-- **Co-op:** the world advances at an agreed wall-clock↔sim ratio; **pause and speed changes require consensus** (a vote), so no one can freeze the shared city unilaterally. Players may still *inspect* freely — the UI is decoupled from sim advancement.
-- **Competitive:** continuous real-time at a fixed speed, like a persistent market; no pausing. Build lead-times keep the pace strategic rather than frantic.
-- **Async:** each player owns their own clock; only the deterministic result is submitted and verified.
-- **Persistence & reconnect:** the server holds the authoritative save (snapshot + command log in object store/Postgres); players can drop and rejoin; sessions can be long-running "living cities" or fixed-length scenario challenges.
+The single-player pause and fast-forward cannot apply to a shared world. Thus
+each mode controls the time in a different way.
 
-### 7.4 The Shared-Demand Economy (competitive integrity)
+- **Cooperative:** the world advances at an agreed ratio between the real clock
+  and the simulation clock. A pause or a speed change needs the **agreement of
+  the players**, which is a vote. Thus no player can stop the shared city
+  alone. But each player can *examine* the world freely, because the interface
+  is separate from the advance of the simulation.
+- **Competitive:** continuous real time at a fixed speed, like a market. There
+  is no pause. The construction times keep the speed strategic, not fast.
+- **Asynchronous:** each player owns their own clock. Only the deterministic
+  result goes to the server, and the server examines it.
+- **Storage and reconnection:** the server holds the authoritative save, which
+  is the snapshot and the command log in the object store or Postgres. A player
+  can disconnect and connect again. A session can be a long "living city" or a
+  scenario challenge with a fixed length.
 
-Competition is fair and interesting because **demand is a finite, modeled resource, not spawned per player**. Every operator's service reshapes the generalized-cost landscape, and the assignment step re-splits the **same** rider population. The consequences *emerge* from the model rather than being scripted:
-- Two operators overserving one corridor → a frequency war that collapses *both* fareboxes.
-- A rival's new express steals your long-haul riders but may **feed** your local services at the shared hub (co-opetition).
-- Fare undercutting triggers elasticity + share-shift, and the "▸ why?" panel (§5.4) shows exactly which trips moved and why — Legible Complexity holds in multiplayer.
-- Revenue apportionment and access charges turn **interconnection into a negotiated, quantified relationship** rather than a menu toggle.
+### 7.4 The shared demand economy
 
-### 7.5 Scaling, Cost & Anti-Cheat
+The competition is fair and interesting because **the demand is a finite,
+modelled resource. The game does not make new demand for each player.** The
+service of each operator changes the general cost. Then the assignment step
+divides the **same** population of passengers again. The results *come out of
+the model*. No script controls them.
 
-- **One sim process per active session** (per shared city). Native Rust sims are pooled across nodes; a lobby/matchmaking service assigns players to sessions and **hibernates idle rooms**.
-- **Bandwidth** is bounded by interest management, so a mega-city session never blows up per-client traffic.
-- **Anti-cheat by construction:** the authoritative server plus deterministic **re-simulation verification** (compare state hash) means any submitted or async result can be independently reproduced; a tampered client cannot invent outcomes the kernel wouldn't generate.
-- **Cost control:** async and co-op reuse the same CDN-served baked bundles; only live sessions consume a server sim process.
+- Two operators give too much service in one corridor. Then a frequency war
+  decreases *both* fareboxes.
+- The new express service of a rival takes your long-distance passengers. But
+  it can also **feed** your local services at the shared hub. This is
+  competition and cooperation at the same time.
+- A decrease in a fare starts the elasticity and a change of share. The "▸ why?"
+  panel (§5.4) shows exactly which trips moved and why. Thus legible complexity
+  continues in multiplayer.
+- The division of the revenue and the access charges make the connection
+  between two operators a negotiated relationship that the players can measure.
+  It is not a menu control.
+
+### 7.5 The scale, the cost, and the protection against cheats
+
+- **One simulation process for each active session**, that is, for each shared
+  city. The native Rust simulations use a pool across the nodes. A lobby
+  service gives the players to a session and **stops an idle room**.
+- **The bandwidth has a limit** because of the interest management. Thus a
+  session in a very large city does not increase the traffic for each client.
+- **The design prevents cheats.** The server owns the truth, and it can
+  **simulate a result again** and compare the state hash. Thus any submitted or
+  asynchronous result is reproducible. A client with modified code cannot make
+  a result that the kernel would not make.
+- **Cost control:** the asynchronous mode and the cooperative mode use the same
+  baked bundles from the CDN. Only a live session uses a server process.
 
 ---
 
-## 8. Progress & Roadmap — from First Prototype to v1.0
+## 8. Progress and roadmap
 
-This section is the living development timeline. It maps the entire arc — from the first throwaway prototype to the v1.0 launch — into ten phases, each with concrete deliverables, an **exit gate** (the objective test that must pass before the next phase begins), and the **risks it retires** (cross-referenced to §9). Phases are sequenced so that the highest-uncertainty technical claims are proven earliest, when they are cheapest to fail.
+This section is the live development timeline. It gives the full arc from the
+first prototype to the v1.0 launch, in ten phases. Each phase has concrete
+deliverables, an **exit gate**, and the **risks that it retires**. The exit
+gate is the objective test that must pass before the next phase starts. The
+risks refer to §9. The order of the phases puts the technical claims with the
+most uncertainty first, when a failure is cheapest.
 
-**Status legend:** ✅ complete · 🔄 in progress · ⬜ not started
-**Timeline assumption:** a core team of 3–5 (systems/sim engineer, full-stack/graphics engineer, data engineer, designer, +generalist), ~36 months end-to-end. Durations are working estimates, not commitments.
+**The status symbols:** ✅ complete · 🔄 in progress · ⬜ not started
 
-### Milestone summary
+**The timeline assumption:** a core team of 3 to 5 persons across approximately
+36 months. The team has a simulation engineer, a full-stack and graphics
+engineer, a data engineer, a designer, and one more person. The durations are
+estimates. They are not commitments.
 
-| Milestone | Phases | Content | Target |
+### The milestones
+
+| Milestone | Phases | Contents | Target |
 |---|---|---|---|
-| **M0 — Proofs** | 0–2 | Toy prototype; data ingestion spike; WASM kernel + static model | Months 1–6 |
-| **M1 — Vertical slice** | 3 | One baked city; rail-only; demand model + static forecast; Inspect/Build modes; core KPIs | Months 7–9 |
-| **M2 — Operations** | 4 | Dynamic sim, crowding/bunching, maintenance cycles, operating economy, tactical loop | Months 10–13 |
-| **M3 — Multimodal** | 5 | Buses on road congestion model, transfer hubs, mode choice across modes | Months 14–17 |
-| **M4 — Meta** | 6 | Accuracy scoring & institutional progression, grants/bonds, equity mandates, scenarios/leaderboards | Months 18–21 |
-| **M5 — Scale & polish** | 7 | Large-metro LOD, additional city bundles, 3D station inspector, full UI accessibility pass | Months 22–26 |
-| **M6 — Multiplayer** | 8 | Server-authoritative session sim; async leaderboards + ghosts; co-op; competitive operators | Months 27–32 |
-| **v1.0 — Launch** | 9 | Hardening, content, live-ops readiness, launch | Months 33–36 |
+| **M0 — Proofs** | 0–2 | The toy prototype, the data ingestion test, the WASM kernel, and the static model | Months 1–6 |
+| **M1 — Vertical slice** | 3 | One baked city, rail only, the demand model, the static forecast, the Inspect and Build modes, and the core KPIs | Months 7–9 |
+| **M2 — Operations** | 4 | The dynamic simulation, the full vehicles, the maintenance cycles, the operating economy, and the tactical loop | Months 10–13 |
+| **M3 — Multimodal** | 5 | The buses on the road congestion model, the transfer hubs, and the mode choice across the modes | Months 14–17 |
+| **M4 — Meta** | 6 | The accuracy score, the institutional progression, the grants and the bonds, the equity mandates, the scenarios, and the leaderboards | Months 18–21 |
+| **M5 — Scale and polish** | 7 | The level of detail for a large city, more city bundles, the 3D station editor, and the full accessibility work | Months 22–26 |
+| **M6 — Multiplayer** | 8 | The session simulation on the server, the asynchronous leaderboards and ghosts, the cooperative mode, and the competitive operators | Months 27–32 |
+| **v1.0 — Launch** | 9 | The final work, the content, the readiness for live operations, and the launch | Months 33–36 |
 
-### Phase 0 — Throwaway Prototype: "Dots on Lines" (Weeks 1–6) ✅
+### Phase 0 — the first prototype: "dots on lines" (weeks 1–6) ✅
 
-The cheapest possible test of the core fantasy: is *watching a transit network you designed come alive* fun, before any real data or real tech is involved?
+This is the cheapest possible test of the core idea. Is it interesting to look
+at a transit network that you designed? The test uses no real data and no real
+technology.
 
-- ✅ Game concept, design pillars, and this GDD (v0.9) drafted.
-- ✅ Pure-TypeScript toy: a hardcoded fictional grid city (~50 zones), canvas 2D rendering. *(Vite + strict TS; 7×7 demand grid with jobs-heavy core and pop-heavy ring; deterministic fixed-timestep 4 Hz kernel with seeded PRNG — the §4.3/§6.3 determinism discipline kept from day one.)*
-- ✅ Click-to-draw lines and stations; vehicles as dots moving on schedules; passengers as counts that spawn, wait, board, alight via naive shortest-path. *(Snap-to-station drawing creates transfer stations; Dijkstra over (station, line) states with headway wait + transfer penalty; crush-capacity boarding with left-behinds; AM/PM directional demand with hourly profile.)*
-- ✅ One KPI readout (daily boardings) and a pause/speed control. *(Glance strip: clock, pause/0.5×/1×/4×/~1 day-min controls, daily boardings + waiting/completed/unserved minor stats; minimal station/line Focus panel.)*
-- ✅ Playtest with 5–10 people: do they lean in and draw a second line without being told to?
+- ✅ The game concept, the design pillars, and this GDD (v0.9).
+- ✅ A toy in TypeScript only. It has an imaginary grid city of approximately 50
+  zones and 2D canvas rendering.
+  - Vite and strict TypeScript.
+  - A 7×7 demand grid, with many jobs in the centre and many residents in a
+    ring.
+  - A deterministic fixed-timestep kernel at 4 Hz, with a seeded PRNG. Thus the
+    determinism discipline of §4.3 and §6.3 started on the first day.
+- ✅ Click to draw the lines and the stations. The vehicles are dots that move
+  on schedules. The passengers are counts that start, wait, get on, and get
+  off, with a simple shortest path.
+  - A line that attaches to a station makes a transfer station.
+  - Dijkstra across (station, line) states, with the headway wait and a
+    transfer penalty.
+  - Boarding with a crush capacity, and passengers that stay behind.
+  - Directional demand in the morning and the evening, with an hourly profile.
+- ✅ One KPI (the daily boardings) and a pause and speed control.
+  - The strip has the clock, the controls for pause, 0.5×, 1×, 4×, and
+    approximately one day each minute, and the daily boardings.
+  - It also has the waiting, completed, and unserved counts, and a small Focus
+    panel for a station and a line.
+- ✅ A playtest with 5 to 10 persons. Do they lean forward and draw a second
+  line with no instruction?
 
-**Deliberately excluded:** real data, Rust/WASM, deck.gl, economy, everything else. This code is scaffolding and will be deleted.
-**Exit gate:** playtesters unprompted redesign their network to chase the boardings number — evidence the observe→replan loop has intrinsic pull.
-**Retires:** the unstated biggest risk of all — that the core loop isn't engaging.
+**The team deliberately did not build:** real data, Rust and WASM, deck.gl, the
+economy, and everything else. This code is temporary, and the team will delete
+it.
 
-### Phase 1 — Data Ingestion Spike: One Real City on Screen (Weeks 7–14) 🔄
+**The exit gate:** a playtester changes their network to increase the boardings
+number, with no instruction. This shows that the observe-and-plan loop is
+interesting.
 
-Prove the "world baking" pipeline (§1.4) end-to-end on **one mid-size city with excellent open data**. **City selected: Houston** (METRO GTFS feed mdb-2060; LODES/gazetteer census coverage for Harris, Fort Bend, Montgomery, Brazoria, Galveston; no existing heavy-rail metro, so the player builds from a clean slate).
+**It retires:** the largest risk of all, which no person wrote down. The core
+loop can be uninteresting.
 
-- ✅ OSM extract → street/rail graph; GTFS parse → reference network; census join → tract demand zones. *(GTFS ✅ — 115 routes / 21,878 trips / 8,793 stops / 229,813 shape points parsed into the reference network. Census→zones ✅ — LODES RAC×2.15 population proxy + WAC jobs joined onto **1,560 census-tract polygons** (TIGERweb `Generalized_TAB2020`, the same 2020 vintage as the LODES block geocodes, so GEOIDs join exactly), 6.5M pop / 3.1M jobs, zero tracts dropped; ACS B01003 pending a Census API key (keyless access was retired). Zone geometry was H3 res-8 hexes until late Phase 1 — see the §4.1.1 revision note for why tracts replaced them and what that costs. OSM street/rail graph ✅ — Overpass queried as 48 cached tiles over the padded stop extent → 184,650 ways / 994,816 raw nodes collapsed to a **258,243-node, 343,502-edge routing graph**: 39,258 km road + 3,348 km rail, one-way flags and class per edge, 99.5% of edge length in a single connected component. `highway=service` is excluded on purpose — it triples the way count and routes nowhere.)*
-- ✅ Conflation pass (GTFS stops snapped to OSM network) with a validation report of unmatched/malformed entities. *(Mode-aware projection onto the graph — rail-only stops onto rails, road stops onto streets: **8,780 / 8,787 served stops matched (99.9%)**, median snap 5.9 m, p90 9.4 m, 99.4% within 25 m, all 80 rail stops matched. The 7 misses are named in `conflation.json` and are all park-and-rides and the Hobby Airport kerb — facilities reached only by the `service` drives the graph omits. Geometry independently re-derived from the artifacts and agrees to within the 1.1 m coordinate quantisation.)*
-- 🔄 PMTiles basemap + deck.gl rendering of the real city: streets, land use, demand heatmap, reference-network ghost overlay. *(deck.gl over MapLibre GL ✅ — dark OSM basemap, **PolygonLayer census-tract demand choropleth** (D), METRO reference ghost overlay (G), PathLayer lines / ScatterplotLayer stations & vehicles / IconLayer interchanges. The choropleth encodes **density** (pop+jobs per km²) under quantile classification on a validated single-hue amber ramp: tracts hold roughly equal population by design, so raw counts read flat, and density here is heavy-tailed enough (peak ≈ 35× median) that log and percentile-stretch scales both collapsed the city into one or two ramp steps. Basemap is hosted OpenFreeMap tiles for now; self-hosted PMTiles ⬜ — the last open item in this phase.)*
-- 🔄 First **Baked World Bundle** artifact (versioned, CDN-servable) and the bake CLI that produces it. *(One CLI, six stages: `npm run bake` → `public/world/houston/v1/{demand,gtfs_baseline,stops,street_graph,conflation,meta,bake_report}.json`, versioned + cached + provenance/attribution per §6.2; JSON stands in for PMTiles/Parquet formats. `--skip-network` skips the Overpass stages for a seconds-long demand-only re-bake. The 26 MB graph is deliberately **off the boot path** — the client fetches only demand/baseline/meta — which is what keeps the < 8 s exit gate reachable; streaming it is Phase-2 work, alongside the binary format it wants.)*
-- ✅ Ingestion validation/repair stage for malformed feeds (schema checks, orphan trips, broken shapes). *(Full GTFS schema + referential-integrity stage: required files/columns, duplicate keys, coordinate and `location_type` ranges, `route_type` domain, dangling `parent_station`/`route_id`/`service_id`/`shape_id`/`trip_id`/`stop_id`, non-increasing `stop_sequence`, unparseable or backwards times — streamed over all 1.4 M `stop_times` rows in ~1 s. Three severities: fatal stops the bake, error reports, warning informs. Houston comes back with **0 integrity errors** and 4 quality warnings (6 unserved stops, 6 tripless routes, 17 unused shapes, 4 unused services). Because a clean feed proves nothing, `npm run check:gtfs` injects 17 defects one at a time and asserts each is caught, plus a control asserting the untouched feed stays silent. It runs first in `npm run bake`, so a feed that cannot produce a trustworthy reference network fails loudly instead of yielding a silently-empty overlay. Earlier repairs — shape resequencing, bad-coordinate drops, multi-URL fallback — still apply downstream of it.)*
+### Phase 1 — the data ingestion test: one real city (weeks 7–14) 🔄
 
-**Exit gate:** a stranger can open a URL, see their recognizable real city with a demand heatmap, in < 8 s load on broadband. — ✅ **met: 3.0 s.** Measured against the production build (`vite preview`) in headless Chromium, cold cache, throttled to 20 Mbit/s / 40 ms RTT, timing navigation → loading overlay dismissed (which fires downstream of the world bundle resolving). Boot payload **0.95 MB** over 11 requests: 490 KB JS + 11 KB CSS + 336 KB `demand.json` + 26 KB `gtfs_baseline.json` + ~100 KB basemap tiles, all gzipped. Headroom is ~2.6×, and the 26 MB street graph is deliberately off the boot path — it is bake/routing input, not client payload.
-**Retires:** §9-4 (GTFS/OSM quality variance — proven on real messy data, with the repair stage in place).
+This phase proves the world bake pipeline (§1.4) from end to end, on **one
+medium city with very good open data**.
 
-### Phase 2 — Simulation Kernel & Static Model (Months 4–6) ⬜
+**The team selected Houston.** There are three reasons:
 
-The deepest technical bet: the Rust→WASM deterministic kernel (§1.2) and the four-step static model (§4.1), calibrated against the Phase-1 city.
+- The METRO GTFS feed (mdb-2060).
+- The LODES and gazetteer census coverage for Harris, Fort Bend, Montgomery,
+  Brazoria, and Galveston.
+- There is no heavy-rail metro. Thus the player starts with nothing.
 
-- ⬜ Rust kernel skeleton: fixed-timestep tick, seeded PRNG, SharedArrayBuffer bridge to deck.gl; determinism test harness in CI (replay N ticks twice → identical state hash), including WASM-vs-native parity.
-- ⬜ Routing backends: Contraction Hierarchies (road), RAPTOR/CSA (transit); skim generation for the full zone set.
-- ⬜ Four-step static pipeline: trip generation → gravity/IPF distribution → nested-logit mode choice → hyperpath transit + Frank–Wolfe road assignment.
-- ⬜ Calibration v1: ODME + coefficient fitting against the reference network's observed boardings; **GEH < 5 on majority of links** (§4.1.6).
-- ⬜ Performance benchmark: static forecast for a player-drawn line in ≤ 300 ms perceived; kernel tick ≤ 30 ms (§6.1) at Phase-1 city scale.
+- ✅ **The OSM extract, the GTFS parse, and the census join.**
+  - GTFS ✅ — the parse gave the reference network: 115 routes, 21,878 trips,
+    8,793 stops, and 229,813 shape points.
+  - The census and the zones ✅ — the pipeline joined two values onto **1,560
+    census tract areas**. The values are the LODES RAC value, multiplied by
+    2.15 as a population proxy, and the WAC jobs value. The source is TIGERweb `Generalized_TAB2020`. It is the same 2020
+    vintage as the LODES block geocodes, thus the GEOIDs join exactly. The
+    total is 6.5M residents and 3.1M jobs, and no tract was lost. The ACS
+    B01003 join waits for a Census API key, because access with no key is no
+    longer available.
+  - The zone geometry used H3 resolution 8 hexes until late in Phase 1. See the
+    note in §4.1.1 for the reason for the change to tracts and for its cost.
+  - The OSM street and rail graph ✅ — the pipeline queried Overpass as 48
+    cached tiles across the stop area with padding. It got 184,650 ways and
+    994,816 raw nodes. It collapsed them into a routing graph with **258,243
+    nodes and 343,502 edges**: 39,258 km of road and 3,348 km of rail. Each
+    edge has a one-way flag and a class. A single connected component holds
+    99.5% of the edge length. The pipeline excludes `highway=service` on
+    purpose. That class makes the way count three times larger and it routes
+    nowhere.
+- ✅ **The conflation pass.** It attaches the GTFS stops to the OSM network. It
+  also makes a validation report. The report names each entity that does not
+  match or that is malformed.
+  - The projection knows the mode. A rail stop goes onto a rail, and a road
+    stop goes onto a street. The result is **8,780 of 8,787 served stops
+    matched (99.9%)**. The median snap distance is 5.9 m and the p90 is 9.4 m.
+    99.4% are inside 25 m. All 80 rail stops matched.
+  - `conflation.json` names the 7 stops that did not match. They are all
+    park-and-rides and the kerb at Hobby Airport. Only the `service` roads
+    reach these facilities, and the graph excludes those roads.
+  - The team derived the geometry again from the artifacts. It agrees inside
+    the coordinate quantisation of 1.1 m.
+- 🔄 **The PMTiles basemap and the deck.gl rendering of the real city.** This
+  shows the streets, the land use, the demand heatmap, and the ghost overlay of
+  the reference network.
+  - deck.gl above MapLibre GL ✅ — the layers are these:
+    - A dark OSM basemap.
+    - A **census tract demand choropleth** in a `PolygonLayer` (key D).
+    - The METRO reference ghost overlay (key G).
+    - A `PathLayer` for the lines.
+    - A `ScatterplotLayer` for the stations and the vehicles.
+    - An `IconLayer` for the interchanges.
+  - The choropleth shows the **density**, which is the residents plus the jobs
+    for each km². It uses quantile classes on a validated single-hue amber
+    ramp. A tract holds approximately the same population as another tract by
+    design. Thus a raw count looks flat. The density has a heavy tail: the peak
+    is approximately 35 times the median. A log scale and a percentile stretch
+    both collapsed the city into one or two steps of the ramp.
+  - The basemap now uses hosted OpenFreeMap tiles. Our own PMTiles ⬜ — this is
+    the last open item of this phase.
+- 🔄 **The first baked world bundle** artifact, with a version, that a CDN can
+  serve. Also the bake CLI that makes it.
+  - One CLI with six stages: `npm run bake` writes
+    `public/world/houston/v1/{demand,gtfs_baseline,stops,street_graph,conflation,meta,bake_report}.json`.
+    It has a version, a cache, and the provenance and attribution of §6.2. JSON
+    is a temporary substitute for the PMTiles and Parquet formats.
+  - `--skip-network` skips the Overpass stages. Thus a demand-only bake takes
+    seconds.
+  - The graph is 26 MB, and it is deliberately **not on the boot path**. The
+    client gets only the demand, the baseline, and the metadata. This keeps the
+    exit gate of < 8 s possible. A stream for the graph is Phase 2 work,
+    together with the binary format that it needs.
+- ✅ **The validation and repair stage for a malformed feed.** It does schema
+  checks and finds orphan trips and broken shapes.
+  - The stage checks the full GTFS schema and its referential integrity. It
+    checks the necessary files and columns, the duplicate keys, the coordinate
+    and `location_type` ranges, and the `route_type` domain. It also finds
+    these three defects: an id with no target, a `stop_sequence` that does not
+    increase, and a time that is unreadable or backwards. The ids that it
+    checks are `parent_station`, `route_id`, `service_id`, `shape_id`,
+    `trip_id`, and `stop_id`. It streams all 1.4M `stop_times` rows
+    in approximately 1 s.
+  - There are three severities. A fatal error stops the bake. An error goes
+    into the report. A warning gives information only.
+  - Houston returns **0 integrity errors** and 4 quality warnings. The
+    warnings are 6 stops with no service, 6 routes with no trip, 17 shapes
+    with no use, and 4 services with no use.
+  - A clean feed proves nothing. Thus `npm run check:gtfs` puts 17 defects into
+    the feed, one at a time, and asserts that the stage finds each one. A
+    control test asserts that the unchanged feed gives no message. This test
+    operates first in `npm run bake`. Thus a feed that cannot make a
+    trustworthy reference network fails loudly. It does not make an empty
+    overlay in silence.
+  - The earlier repairs still operate after this stage. They are the resequence
+    of a shape, the removal of a bad coordinate, and the fallback across
+    several URLs.
 
-**Exit gate:** the calibration gate passes on the pilot city — the simulated reference network reproduces reality within tolerance — *and* the performance budget holds in-browser.
-**Retires:** §9-2 partially (in-browser performance, at mid-size scale), §9-5 (determinism harness exists from day one), §9-1/§9-6 partially (calibration methodology proven on one data-rich city).
+**The exit gate:** a new person opens a URL and sees their own real city with a
+demand heatmap. The load must take less than 8 s on broadband. ✅ **Satisfied:
+3.0 s.** The measurement used the production build (`vite preview`) in headless Chromium
+with a cold cache, at 20 Mbit/s and 40 ms RTT. The timer ran from the
+navigation to the removal of the loading overlay, which happens after the world
+bundle resolves. The boot payload was **0.95 MB** across 11 requests. All the
+parts use gzip. The parts are these:
 
-### Phase 3 — M1 Vertical Slice: The Playable Core (Months 7–9) ⬜
+- 490 KB of JS and 11 KB of CSS.
+- 336 KB of `demand.json`.
+- 26 KB of `gtfs_baseline.json`.
+- Approximately 100 KB of basemap tiles.
 
-Assemble Phases 1–2 into the first real *game*: blank-slate start (§2), rail-only, one city.
+There is approximately
+2.6 times more time available. The 26 MB street graph is deliberately not on
+the boot path. It is an input to the bake and the routing. It is not a client
+payload.
 
-- ⬜ Plan/Build mode: alignment drawing (at-grade/elevated/tunnel with cost differentials), station placement with portal positioning and walk-catchment preview.
-- ⬜ Live forecast-with-confidence-bands on every proposal (§2.5); commit → construction time/cost.
-- ⬜ Inspect mode + Glance strip: the four mandate KPIs, budget, clock, time controls.
-- ⬜ Capital account v1 (surplus + simple bonds); no operating detail yet.
-- ⬜ Reference ghost overlay with per-line real performance — the benchmark loop (§2.5) in its first form.
-- ⬜ Internal milestone build: 20+ external playtesters; instrumented sessions.
+**It retires:** §9-4, the variance in the quality of GTFS and OSM data. Real
+messy data proved it, and the repair stage is in place.
 
-**Exit gate:** median playtester voluntarily plays ≥ 45 minutes and can articulate *why* their forecast missed (Legible Complexity pillar validated); the honest-uncertainty bands are read correctly.
-**Retires:** §9-3 partially (depth-vs-onboarding, first evidence).
+### Phase 2 — the simulation kernel and the static model (months 4–6) ⬜
 
-### Phase 4 — M2 Operations: The Living Day (Months 10–13) ⬜
+This is the deepest technical bet: the deterministic Rust and WASM kernel
+(§1.2) and the four-step static model (§4.1), calibrated against the Phase 1
+city.
 
-The dynamic regime (§4.3): the simulated day as an observable system.
+- ⬜ The kernel skeleton in Rust: the fixed-timestep tick, the seeded PRNG, and
+  the SharedArrayBuffer bridge to deck.gl. Also a determinism test in CI, which
+  replays N ticks two times and compares the state hash. The test includes the
+  comparison of WASM against native.
+- ⬜ The routing backends: contraction hierarchies for the road, and RAPTOR and
+  CSA for the transit. Also the generation of the skims for the full zone set.
+- ⬜ The four-step static pipeline: trip generation, then gravity and IPF
+  distribution, then nested-logit mode choice, then hyperpath transit
+  assignment and Frank–Wolfe road assignment.
+- ⬜ Calibration v1: ODME and coefficient fitting against the observed boardings
+  of the reference network. The target is a **GEH < 5 on most of the links**
+  (§4.1.6).
+- ⬜ A performance test at the scale of the Phase 1 city. It has two targets:
+  - A static forecast for a line that the player draws, in ≤ 300 ms as the
+    player sees it.
+  - A kernel tick of ≤ 30 ms (§6.1).
 
-- ⬜ Full agent tick: passenger flow packets spawn/wait/board/transfer/left-behind; vehicle physics from tractive-effort curves (§3.1); dwell from door throughput.
-- ⬜ Emergent phenomena verified against the model: crowding feedback, dwell inflation, bunching; holding-strategy mitigations.
-- ⬜ Reliability draws from MDBF/OTP priors; incident → delay propagation.
-- ⬜ Maintenance ladder (§3.1) with depot bay capacity; deferral consequences.
-- ⬜ Operating account: energy from traction physics, crew, maintenance accrual, fare revenue v1 (flat fare), farebox recovery KPI; subsidy envelope + downgrade spiral (§2.4).
-- ⬜ Tactical loop UI: per-band headways, consist assignment, Focus panel with live-forecast sliders (§5.4); "▸ why?" traceability v1.
-- ⬜ Forecast-vs-realized delta now computable → Forecast Accuracy metric exists (unscored).
+**The exit gate:** the calibration gate passes on the pilot city. The simulated
+reference network agrees with reality inside the tolerance. The performance
+budget also holds in the browser.
 
-**Exit gate:** a scripted scenario ("your line is over crush load at 8 AM — fix it within budget") is solvable by playtesters using only the telemetry, without designer hints.
+**It retires:**
 
-### Phase 5 — M3 Multimodal: The Whole Toolbox (Months 14–17) ⬜
+- §9-2 partly. This is the browser performance at a medium scale.
+- §9-5. The determinism test exists from the first day.
+- §9-1 and §9-6 partly. The calibration method is proven on one city with much
+  data.
 
-- ⬜ Road congestion model: BPR volume-delay, background car traffic at user equilibrium; congestion feedback into skims.
-- ⬜ Surface modes on the congestion-exposure ladder (§3.3): local/express bus, BRT, tram, trolleybus; dedicated-lane and grade-separation investments visibly move OTP distributions.
-- ⬜ Remaining catalogue modes (ferry, monorail/APM, gondola, funicular, DRT, bike-share, park-and-ride) with per-mode rolling-stock parameter sets.
-- ⬜ Transfer hubs with explicit transfer graphs, penalties, timed transfers (§3.2); trunk-and-feeder synergy measurable in the mode-choice terms.
-- ⬜ Mode-fit function UI: cost-per-rider curves per corridor (§3.3).
-- ⬜ Full fare engine: flat/zonal/distance/passes, elasticity feedback (§4.1.7).
+### Phase 3 — M1 vertical slice: the playable core (months 7–9) ⬜
 
-**Exit gate:** in playtests, players discoverably learn the overbuild/underbuild lesson (§3.3) from the economics alone — the data teaches mode choice without a tutorial forcing it.
+This phase puts Phase 1 and Phase 2 together to make the first real *game*. The
+player starts with nothing (§2). There is rail only, and one city.
 
-### Phase 6 — M4 Meta-Game: Mastery & Mandate (Months 18–21) ⬜
+- ⬜ The Plan/Build mode. Draw an alignment at grade, elevated, or in a tunnel.
+  Each choice has a different cost. Place a station, position its entrances,
+  and preview the walk catchment.
+- ⬜ A live forecast with confidence bands for each proposal (§2.5). After the
+  commit, the construction takes time and money.
+- ⬜ The Inspect mode and the Glance strip: the four mandate KPIs, the budget,
+  the clock, and the time controls.
+- ⬜ Capital account v1, with the surplus and simple bonds. There is no
+  operating detail yet.
+- ⬜ The reference ghost overlay, with the real performance of each line. This
+  is the first form of the benchmark loop (§2.5).
+- ⬜ An internal build for the milestone. More than 20 external playtesters,
+  with instrumented sessions.
 
-- ⬜ Forecast Accuracy scoring + institutional progression: credibility → cheaper bonds, grants, unlocked analytics (§2.5, §3.4).
-- ⬜ Full finance: bond market with credit rating, grant programs tied to coverage/ridership/equity mandates.
-- ⬜ Equity overlays and mandate tracking (§5.5, §6.2); benchmark scoring vs. the reference network as a headline result screen.
-- ⬜ Scenario framework: authored challenges with fixed seeds, win conditions, par scores; guided scenarios double as the tutorial ladder (§9-3 mitigation).
-- ⬜ Single-player leaderboards on deterministic scenario results (pre-multiplayer: local verification only).
-- ⬜ **Closed alpha** (hundreds of players, one city): retention, difficulty, and onboarding telemetry.
+**The exit gate:** the median playtester plays for ≥ 45 minutes without an
+instruction, and can explain *why* their forecast was incorrect. This validates
+the legible complexity pillar. The players also read the uncertainty bands
+correctly.
 
-**Exit gate:** closed-alpha D7 retention and tutorial completion rates meet targets; new players reach their first committed line within 20 minutes unaided.
-**Retires:** §9-3 (onboarding, at scale).
+**It retires:** §9-3 partly, the tension between the depth and the
+introduction. This is the first evidence.
 
-### Phase 7 — M5 Scale & Polish (Months 22–26) ⬜
+### Phase 4 — M2 operations: the living day (months 10–13) ⬜
 
-- ⬜ Large-metro stress program: LOD demand aggregation, flow-packet aggregation, viewport culling; performance budget (§6.1) held on a >10k-stop metro.
-- ⬜ City pipeline industrialized: 5–8 launch cities across data-fidelity tiers, with the tiered fidelity labeling (§9-1) surfaced in city selection.
-- ⬜ Three.js station inspector: 3D platform/portal/vertical-circulation editing with live egress preview (§5.6).
-- ⬜ Full accessibility pass (§5.7): keyboard nav, command palette, colorblind-safe validation, panel persistence.
-- ⬜ Save/load hardening, bundle versioning/migration policy, credits & data-provenance panel (§6.2).
-- ⬜ **Open beta** (single-player) on the launch city set.
+This phase adds the dynamic mode (§4.3). The simulated day becomes a system
+that the player can observe.
 
-**Exit gate:** performance budget green on the largest launch city on mid-range hardware; open-beta crash-free session rate ≥ 99.5%.
-**Retires:** §9-2 (mega-city performance, fully).
+- ⬜ The full agent tick: the passenger flow packets start, wait, get on,
+  transfer, or stay behind. The vehicle physics come from the tractive effort
+  curves (§3.1). The dwell comes from the door throughput.
+- ⬜ Verification that the effects agree with the model: the feedback from full
+  vehicles, the longer dwell, and the vehicles that collect together. Also the
+  holding strategies that decrease them.
+- ⬜ Reliability draws from the MDBF and OTP priors. An incident then propagates
+  a delay.
+- ⬜ The maintenance ladder (§3.1), with the depot bay capacity and the results
+  of a deferral.
+- ⬜ The operating account: the energy from the traction physics, the crew, the
+  maintenance, and fare revenue v1 with a flat fare. Also the farebox recovery
+  KPI, the subsidy limit, and the decline after a downgrade (§2.4).
+- ⬜ The interface for the tactical loop: the headway for each band, the consist
+  assignment, and the Focus panel with live forecast sliders (§5.4). Also the
+  first version of the "▸ why?" traceability.
+- ⬜ The difference between the forecast and the real result is now available.
+  Thus the forecast accuracy metric exists, but the game does not score it yet.
 
-### Phase 8 — M6 Multiplayer (Months 27–32) ⬜
+**The exit gate:** a scripted scenario is solvable by a playtester with the
+telemetry only, and with no hint from a designer. The scenario is this: "your
+line is above the crush load at 08:00. Correct it inside the budget."
 
-Sequenced by netcode risk, cheapest first (§7):
+### Phase 5 — M3 multimodal: the full toolbox (months 14–17) ⬜
 
-- ⬜ **8a — Async (months 27–28):** server-side native kernel; submission re-simulation + state-hash verification; leaderboards and ghost overlays. First hard test of cross-platform determinism in production (§9-5).
-- ⬜ **8b — Co-op (months 29–30):** session server, command protocol, role permissions, audit log, consensus time control, reconnect/persistence.
-- ⬜ **8c — Competitive (months 31–32):** shared-demand assignment across operators, revenue apportionment, access charges, franchise/tender scaffolding; balance passes on frequency-war and undercutting dynamics (§7.4).
-- ⬜ Lobby/matchmaking, session pooling, hibernation, interest-managed state streaming; load test at target concurrency.
+- ⬜ The road congestion model: the BPR volume-delay function, and the
+  background car traffic at user equilibrium. The congestion goes back into the
+  skims.
+- ⬜ The surface modes on the ladder of exposure to congestion (§3.3): the local
+  bus, the express bus, the BRT, the tram, and the trolleybus. A dedicated lane
+  and a grade separation visibly change the on-time performance.
+- ⬜ The remaining modes of the catalogue: the ferry, the monorail and APM, the
+  gondola, the funicular, the DRT, the bike-share, and the park-and-ride. Each
+  gets its own rolling stock parameters.
+- ⬜ The transfer hubs, with explicit transfer graphs, penalties, and timed
+  transfers (§3.2). The trunk-and-feeder effect is measurable in the mode
+  choice terms.
+- ⬜ The interface for the mode-fit function: the cost-per-passenger curve for
+  each corridor (§3.3).
+- ⬜ The full fare engine: flat, zonal, distance, and passes, with the
+  elasticity feedback (§4.1.7).
 
-**Exit gate:** a week-long persistent co-op city and a competitive season complete without a determinism divergence or verified-score dispute.
-**Retires:** §9-5 (fully, in production).
+**The exit gate:** in a playtest, the players learn the lesson about too much
+construction and too little construction (§3.3) from the economics alone. The
+data teaches the mode choice, and no tutorial forces it.
 
-### Phase 9 — v1.0 Launch (Months 33–36) ⬜
+### Phase 6 — M4 meta-game: mastery and mandate (months 18–21) ⬜
 
-- ⬜ Content complete: launch city set finalized and calibrated; scenario catalogue; localization of UI text.
-- ⬜ Live-ops readiness: telemetry dashboards, feed-refresh pipeline producing new world versions (§1.4), moderation/reporting for multiplayer, status page.
-- ⬜ Balance freeze → release-candidate discipline: only gate-blocking fixes.
-- ⬜ Marketing beats aligned to the shareable loop ("I out-designed my city") — press/creator builds with capture-friendly overlays.
-- ⬜ **v1.0 ship.** Post-launch backlog seeded: additional cities on cadence, seasonal scenario challenges, modding/city-request pipeline.
+- ⬜ The forecast accuracy score and the institutional progression. Credibility
+  gives cheaper bonds, grants, and new analysis tools (§2.5, §3.4).
+- ⬜ The full finance: a bond market with a credit rating, and grant programs
+  connected to the mandates for the coverage, the ridership, and the equity.
+- ⬜ The equity overlays and the mandate tracking (§5.5, §6.2). A benchmark
+  score against the reference network becomes the headline result screen.
+- ⬜ The scenario framework: authored challenges with fixed seeds, win
+  conditions, and par scores. The guided scenarios are also the tutorial ladder
+  (this decreases risk §9-3).
+- ⬜ Single-player leaderboards on the deterministic scenario results. This is
+  before multiplayer, thus the verification is local only.
+- ⬜ A **closed alpha** with hundreds of players and one city. The team collects
+  telemetry about the retention, the difficulty, and the introduction.
 
-**Exit gate (definition of 1.0):** all §6.1 budgets green on all launch cities · calibration gate passed per launch city (or fidelity-labeled) · all three multiplayer modes stable · zero known determinism breaks · onboarding metrics at Phase-6 targets or better.
+**The exit gate:** the D7 retention and the tutorial completion rate of the
+closed alpha satisfy the targets. A new player commits their first line inside
+20 minutes, with no help.
 
-### Timeline at a glance
+**It retires:** §9-3, the introduction, at scale.
+
+### Phase 7 — M5 scale and polish (months 22–26) ⬜
+
+- ⬜ A stress program for a large city. It uses the level of detail for the
+  demand, the grouping of the flow packets, and the culling of the viewport.
+  The performance budget (§6.1) must hold on a city with more than 10k stops.
+- ⬜ The city pipeline becomes industrial: 5 to 8 launch cities across the
+  levels of data fidelity. The city selection screen shows the fidelity label
+  (§9-1).
+- ⬜ The Three.js station editor: 3D editing of the platforms, the entrances,
+  and the stairs and lifts, with a live preview of the exit flow (§5.6).
+- ⬜ The full accessibility work (§5.7): the keyboard navigation, the command
+  palette, the validation for a colour vision deficiency, and the storage of
+  the panel layout.
+- ⬜ Hardening of the save and load. A policy for the bundle version and the
+  migration. A panel for the credits and the data provenance (§6.2).
+- ⬜ An **open beta** for the single-player game, on the set of launch cities.
+
+**The exit gate:** the performance budget is green on the largest launch city,
+on medium hardware. The open beta has a session rate with no crash of ≥ 99.5%.
+
+**It retires:** §9-2 fully, the performance in a very large city.
+
+### Phase 8 — M6 multiplayer (months 27–32) ⬜
+
+The order follows the netcode risk. The cheapest comes first (§7).
+
+- ⬜ **8a — asynchronous (months 27–28).** This phase adds the native kernel on
+  the server. It also adds the simulation of a submission again, with a
+  state-hash comparison, and then the leaderboards and the ghost overlays. This
+  is the first hard test of the cross-platform determinism in production
+  (§9-5).
+- ⬜ **8b — cooperative (months 29–30).** This phase adds the session server,
+  the command protocol, and the role permissions. It also adds the audit log,
+  the time control by agreement, and the reconnection and storage.
+- ⬜ **8c — competitive (months 31–32):** the shared demand assignment across
+  the operators, the division of the revenue, the access charges, and the
+  franchise and tender structure. Also balance work on the frequency war and
+  the fare decrease (§7.4).
+- ⬜ The lobby and matchmaking, the session pool, the hibernation, and the state
+  stream with interest management. Also a load test at the target concurrency.
+
+**The exit gate:** a cooperative city operates for one week, and a competitive
+season is complete. There must be no determinism difference and no dispute
+about a verified score.
+
+**It retires:** §9-5 fully, in production.
+
+### Phase 9 — v1.0 launch (months 33–36) ⬜
+
+- ⬜ The content is complete: the final set of launch cities, each calibrated;
+  the scenario catalogue; and the translation of the interface text.
+- ⬜ Readiness for live operations. This adds four items:
+  - The telemetry dashboards.
+  - The pipeline that refreshes a feed and makes a new world version (§1.4).
+  - The moderation and the reporting for multiplayer.
+  - A status page.
+- ⬜ A balance freeze, then release-candidate discipline. Only a fix that blocks
+  a gate is possible.
+- ⬜ Marketing that agrees with the shareable loop ("I designed my city better
+  than the real one"). Press builds and creator builds have overlays that are
+  good for a capture.
+- ⬜ **The v1.0 release.** The backlog after the launch starts with more cities
+  at intervals, seasonal scenario challenges, and a pipeline for mods and city
+  requests.
+
+**The exit gate, which defines v1.0:** each §6.1 budget is green on each launch
+city. The calibration gate passes for each launch city, or the city has a
+fidelity label. All three multiplayer modes are stable. There is no known
+determinism failure. The introduction metrics are at the Phase 6 targets or
+better.
+
+### The timeline
 
 ```
 Months   1   3   6   9   12  15  18  21  24  27  30  33  36
@@ -885,19 +1653,42 @@ P8 MP                                     ███████  ← M6
 P9 Launch                                        ████ ← v1.0
 ```
 
-**Standing risk discipline:** every phase's exit gate is objective and pre-registered here; a failed gate triggers a scope decision (cut, descope, or extend) *before* downstream phases begin, never a silent slip. The two long-pole risks — in-browser performance (§9-2) and cross-platform determinism (§9-5) — both have their harnesses built in Phase 2, twenty-plus months before they could hurt at scale.
+**The risk discipline:** the exit gate of each phase is objective, and this
+document records it before the work starts. If a gate fails, the team makes a
+scope decision *before* the next phase starts. The decision is to cut, to
+decrease the scope, or to extend the time. A silent delay is not permitted. The
+two longest risks are the browser performance (§9-2) and the cross-platform
+determinism (§9-5). Both get their test in Phase 2, more than twenty months
+before they can cause damage at scale.
 
 ---
 
-## 9. Open Questions / Risks
+## 9. Open questions and risks
 
-1. **Calibration data availability** varies wildly by city — some publish rich performance data, others none. Mitigation: tiered "fidelity" labeling per city; fall back to model priors from comparable cities.
-2. **In-browser performance for mega-cities** (e.g., >10k stops) is the primary technical risk; LOD and flow aggregation must be proven early (M1 stress test).
-3. **Depth vs. onboarding tension** — a serious sim risks an opaque learning curve. Mitigation: the "▸ why?" traceability system doubles as an in-context tutor; guided scenarios teach subsystems incrementally.
-4. **GTFS/OSM quality variance** — malformed feeds need a robust ingestion validation/repair stage.
-5. **Cross-platform determinism parity** — the native-server and WASM-client kernels must agree bit-for-bit for multiplayer, replays, and leaderboard verification (§7.2). This demands disciplined fixed-point or strictly-pinned floating-point math and a dedicated cross-platform determinism test harness in CI.
-6. **Calibration data for demand estimation** — ODME (§4.1.6) needs observed boarding counts (GTFS-RT/APC); cities without them fall back to mode-share priors from comparable cities, which the fidelity label must disclose.
+1. **The availability of calibration data** changes very much between cities.
+   Some cities publish much performance data, and others publish none. *The
+   solution:* give a "fidelity" label to each city, and use the model priors
+   from a comparable city where the data is absent.
+2. **The browser performance in a very large city**, for example more than 10k
+   stops, is the primary technical risk. The level of detail and the grouping
+   of the flow must be proven early, in the M1 stress test.
+3. **The tension between the depth and the introduction.** A serious simulation
+   can have a learning curve that a new player cannot see. *The solution:* the
+   "▸ why?" traceability is also a tutor in the context. The guided scenarios
+   teach the subsystems one at a time.
+4. **The variance in the quality of the GTFS and OSM data.** A malformed feed
+   needs a strong validation and repair stage.
+5. **The determinism across platforms.** The native server kernel and the WASM
+   client kernel must agree bit for bit. This is necessary for multiplayer, the
+   replays, and the verification of a leaderboard (§7.2). It needs fixed-point
+   math, or floating-point math with strict rules, and a dedicated test in CI.
+6. **The calibration data for the demand estimation.** ODME (§4.1.6) needs
+   observed boarding counts from GTFS-RT or APC. A city with no such data must
+   use the mode-share priors of a comparable city. The fidelity label must show
+   this.
 
 ---
 
-*End of document — v0.9 draft. Next review: technical feasibility sign-off on the WASM kernel performance budget (§6.1) and the calibration methodology (§2.5).*
+*This is the end of the document, v0.9 draft. The next review is the technical
+sign-off on the WASM kernel performance budget (§6.1) and on the calibration
+method (§2.5).*

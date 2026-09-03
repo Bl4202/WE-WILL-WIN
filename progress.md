@@ -1,45 +1,171 @@
-Original prompt: CAn you make it so you can toggle a 3d mode that takes real world data to make the buildings look actuarate to real life couterparts, please also refreash the ui so it looks clean and smooth, add animations etc
+# Progress
 
-Added request: Improve the metro simulation with priced construction, per-segment overground/tunnel alignments, accurate Houston airports, buildable airports and other transport, outside connections, congestion, traffic visuals, roads/highways, and optimization.
+*This document uses ASD-STE100 Simplified Technical English.*
 
-Added request (2026-08-22): Rework the interface around a polished bottom operations bar; add day/time, simulation-speed controls, money, signed cashflow, and active passenger totals; require players to buy and assign rolling stock; expose per-line and per-track engineering details; model stations and trains on the map with route labels; add one-way/two-way service; support surface, elevated, and variable-depth tunneling with demolition, cost, and noise tradeoffs; deepen operating simulation; improve the 3D city; add a full light theme, 2D/3D settings, and editable keybinds.
+This document records the requests from the player and the work that is
+complete.
 
-Added feedback (2026-08-22): Match the supplied UI much more literally, remove the blue/teal tint, make every visible road/highway read as 3D geometry, constrain bus services to roads, charge actual intersected building footprints as demolitions, and purchase vehicles into an unassigned pool before assigning them to a line.
+## Requests
 
-## Completed
+### First request
 
-- Added the 2026-08-22 operations overhaul foundation: purchasable/assignable rolling stock, inactive lines until fleet is funded, per-model capacity/speed/noise/energy/reliability/maintenance, one-way or two-way service, calculated headways, energy use, emissions, subsidy, and signed projected daily cashflow.
-- Added per-segment surface/elevated/variable-depth engineering with speed limits, depth premiums, demolition sites/costs, and noise reduction; stations now carry platform, entrance, depth, and daily boarding data.
-- Replaced the sidebar-first shell with a map-first bottom operations bar, contextual construction and fleet panels, detailed station/line views, persistent light/dark and 2D/3D preferences, and editable keybinds.
-- Reworked the chrome into the supplied reference language: compact neutral-black contextual panels, circular tools above a thin bottom strip, small square top controls, neutral light mode, and no persistent brand/dashboard card.
-- Added visible-tile 3D street geometry with extruded road decks, raised highway structures, edge/shadow passes, and traffic stripes; 2D mode removes those extrusions and returns to a flat planning camera.
-- Added a routable visible-road graph. Bus stops snap to streets and stop-to-stop geometry follows connected road vertices instead of drawing straight across blocks.
-- Replaced synthetic clearance counts with real visible OSM building-footprint intersection checks. Surface/elevated segments charge each intersected footprint while tunnels avoid surface demolition.
-- Split fleet procurement from deployment: purchases enter an unassigned pool, compatible vehicles are explicitly assigned to a line, and assigned stock can be returned to the pool.
-- Added toggleable real-world 3D OpenStreetMap buildings and a refreshed animated UI.
-- Added capital and operating accounts, construction estimates, and exact cost deductions.
-- Added Metro, Bus, and Regional Rail services with distinct cost, speed, dwell, capacity, operations, and traffic exposure.
-- Added per-segment surface/tunnel metro alignment and mixed-route pricing/rendering.
-- Seeded IAH, HOU, EFD, Port Houston, Houston Amtrak, and Downtown Transit Center at real-world coordinates.
-- Added buildable bus hubs, rail terminals, harbors, and expensive airports with outside-connection effects.
-- Added congestion, transit share, car-trip, and connected-gateway simulation metrics.
-- Added real OSM highway traffic highlighting and lightweight repeated car glyphs in the tile renderer.
-- Replaced the full-zone destination scan with bounded importance sampling.
-- Production build, HTTP shell smoke test, and mixed-alignment/economy simulation assertions pass.
-- Added concise `render_game_to_text` state and deterministic `advanceTime` hooks for browser QA.
-- Playwright verified the initial 2D view, 3D building view, and a fully committed tunnel line without console errors; tunnel segments now use a clearer cool-blue treatment.
-- Playwright verified mixed surface/tunnel construction, bus and regional-rail services, an additional $2.5B airport, gateway activation, fares/operating costs, and demand flow. The normal loop now yields time control to the automation harness so screenshots and exported state remain synchronized.
-- The browser-readable state includes every visible KPI so automated evidence matches the HUD.
-- Playwright verified the reference-style construction, route-detail, fleet-pool, settings, dark 3D, light 3D, and flat 2D screens without console errors.
-- Playwright verified a road-routed bus segment with 94 street-graph vertices, a downtown surface line charging 10 actual building demolitions, and the full buy-to-pool then assign workflow producing a 284-second operating headway.
+Make a 3D mode that the player can switch on and off. The 3D mode must use
+real-world data. The buildings must look like their real counterparts. Also,
+make the interface clean and smooth, and add animations.
+
+### Added request
+
+Make the transit simulation better. Add these items:
+
+- A price for each construction.
+- An alignment for each segment, on the surface or in a tunnel.
+- The correct positions of the Houston airports.
+- Airports and other transport that the player can build.
+- Connections to areas outside the city.
+- Road congestion, and a display of the traffic.
+- Roads and highways.
+- Better performance.
+
+### Added request (2026-08-22)
+
+Change the interface. Put a bottom operations bar at the centre of it. Add
+these items:
+
+- The day and the time.
+- Controls for the simulation speed.
+- The money, the cashflow with its sign, and the number of active passengers.
+- A rule that the player must buy the rolling stock and then assign it.
+- Engineering data for each line and each track.
+- Stations and trains on the map, with a label for each route.
+- A choice of one-way service or two-way service.
+- Track on the surface, on an elevated structure, or in a tunnel. The tunnel
+  depth is variable. Each choice has a different cost, a different quantity of
+  demolition, and a different quantity of noise.
+- A deeper simulation of the operations.
+- A better 3D city.
+- A full light theme, settings for the 2D view and the 3D view, and keybinds
+  that the player can change.
+
+### Added feedback (2026-08-22)
+
+Make these corrections:
+
+- Obey the supplied interface image more closely.
+- Remove the blue tint and the teal tint.
+- Show every visible road and highway as 3D geometry.
+- Keep the bus services on the roads.
+- Charge for the real building footprints that a segment crosses.
+- Put each vehicle that the player buys into a pool. The player must then
+  assign the vehicle to a line.
+
+## Completed work
+
+- The operations changes of 2026-08-22 are complete. The player buys the
+  rolling stock and assigns it. A line is not active until its fleet has
+  money. Each model has its own capacity, speed, noise, energy, reliability,
+  and maintenance. The service is one-way or two-way. The game calculates the
+  headway, the energy use, the emissions, the subsidy, and the daily cashflow
+  with its sign.
+- Each segment has its own engineering. The choices are the surface, an
+  elevated structure, or a tunnel at a variable depth. Each choice has a speed
+  limit, a depth premium, demolition sites, a demolition cost, and a noise
+  reduction. Each station now holds data for its platform, its entrance, its
+  depth, and its daily boardings.
+- The interface no longer starts at the sidebar. The map is now first. There
+  is a bottom operations bar, a construction panel, a fleet panel, and detail
+  views for the stations and the lines. The game keeps the light or dark
+  preference and the 2D or 3D preference. The player can change the keybinds.
+- The chrome now obeys the supplied reference. It has compact black panels,
+  circular tools above a thin bottom strip, and small square controls at the
+  top. The light mode is neutral. There is no permanent brand card and no
+  permanent dashboard card.
+- The visible tiles now show 3D street geometry. There are road decks, raised
+  highway structures, edge passes, shadow passes, and traffic stripes. The 2D
+  mode removes these extrusions and shows a flat planning camera.
+- There is a road graph that the game can route on. A bus stop attaches to a
+  street. The geometry between two stops follows the road vertices. It no
+  longer crosses the blocks in a straight line.
+- The game no longer uses synthetic clearance counts. It intersects the real
+  OSM building footprints. A surface segment or an elevated segment pays for
+  each footprint that it crosses. A tunnel does not demolish the surface.
+- The purchase of a vehicle is separate from its deployment. A purchase goes
+  into a pool. The player then assigns a compatible vehicle to a line. The
+  player can also return an assigned vehicle to the pool.
+- The 3D OpenStreetMap buildings are available, and the player can switch them
+  on and off. The interface has new animations.
+- There is a capital account and an operating account. The game estimates the
+  construction cost and then subtracts the exact cost.
+- There are three services: Metro, Bus, and Regional Rail. Each service has a
+  different cost, speed, dwell time, capacity, operation, and exposure to
+  traffic.
+- A metro line can change between the surface and a tunnel at each segment.
+  The game prices and draws the mixed route correctly.
+- These facilities are at their real coordinates: IAH, HOU, EFD, Port Houston,
+  Houston Amtrak, and the Downtown Transit Center.
+- The player can build bus hubs, rail terminals, harbours, and airports. An
+  airport is very expensive. Each facility changes the connections to the
+  areas outside the city.
+- The simulation calculates these metrics: the congestion, the transit share,
+  the number of car trips, and the number of connected gateways.
+- The renderer highlights the real OSM highway traffic. It also draws light
+  car glyphs at intervals.
+- The scan of all the zones for a destination is replaced. The game now uses
+  importance sampling with a bound.
+- These tests are correct: the production build, the HTTP shell smoke test,
+  and the simulation assertions for the mixed alignment and the economy.
+- There is a short `render_game_to_text` hook for the state, and a
+  deterministic `advanceTime` hook. Browser QA uses these hooks.
+- Playwright examined the first 2D view, the 3D building view, and a
+  completed tunnel line. There were no console errors. A tunnel segment now
+  has a clear cool-blue colour.
+- Playwright examined these items:
+  - A mixed construction, on the surface and in a tunnel.
+  - The bus service and the regional rail service.
+  - An airport that costs $2.5B.
+  - The activation of a gateway.
+  - The fares and the operating costs.
+  - The flow of the demand.
+
+  The normal loop now gives the time control to the automation. Thus the
+  screenshots and the exported state stay in step.
+- The state that the browser can read contains every visible KPI. Thus the
+  automated evidence agrees with the HUD.
+- Playwright examined these screens in the reference style:
+  - The construction screen.
+  - The route detail screen.
+  - The fleet pool screen.
+  - The settings screen.
+  - The dark 3D screen and the light 3D screen.
+  - The flat 2D screen.
+
+  There were no console errors.
+- Playwright examined these items:
+  - A bus segment on a road with 94 street vertices.
+  - A downtown surface line that pays for 10 real building demolitions.
+  - The full sequence from the purchase into the pool to the assignment.
+
+  The operating headway was 284 seconds.
 
 ## QA result
 
-- Production build passes; the only notice is Vite's existing large-bundle advisory.
-- Playwright screenshots were visually inspected for the 2D map, neutral dark/light 3D city, compact reference-style panels, settings/keybinds, road-routed bus service, demolition markers, and fleet assignment flow.
-- Saved browser state matched the HUD and every tested scenario completed without console errors.
+- The production build is correct. The only message is the usual Vite advisory
+  about the large bundle.
+- A person examined the Playwright screenshots of these items:
+  - The 2D map.
+  - The neutral dark 3D city and the neutral light 3D city.
+  - The compact panels in the reference style.
+  - The settings screen and the keybinds screen.
+  - The bus service on a road.
+  - The demolition markers.
+  - The fleet assignment sequence.
+- The saved browser state agreed with the HUD. Each test scenario was complete
+  and there were no console errors.
 
 ## Future suggestions
 
-- Extend the visible-tile bus router into a streamed citywide graph if cross-city routing without panning becomes a priority.
-- Add LOD-specific vehicle meshes if close street-level camera gameplay becomes a priority; current cars are optimized map glyphs.
+- The bus router uses the visible tiles only. If a route across the full city
+  becomes necessary, change the router to a streamed graph of the full city.
+  The player will then not have to move the map.
+- The cars are map glyphs, and they are optimized for that use. If close
+  street-level play becomes necessary, add vehicle meshes with a level of
+  detail.

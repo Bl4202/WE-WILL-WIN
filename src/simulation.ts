@@ -14,6 +14,7 @@ import {
   DEFAULT_HEADWAY_SEC,
   DEST_DETERRENCE_M,
   LOCAL_DEMAND_FRACTION,
+  PLAN_CACHE_LIMIT,
   SAME_STATION_M,
   SIM_DT,
   WALK_RADIUS,
@@ -159,6 +160,11 @@ export class Simulation {
     string,
     { plan: PlannedTrip; walkSec: number } | null
   >();
+
+  /** Cache occupancy, so the test harness can assert it stays bounded. */
+  get planCacheSize(): number {
+    return this.planCache.size;
+  }
 
   private nextStationId = 1;
   private nextLineId = 1;
@@ -456,6 +462,90 @@ export class Simulation {
     return vehicle;
   }
 
+  /**
+   * Where a vehicle sits in one full round trip, in metres travelled.
+   *
+   * A bidirectional service is a loop of length 2L even though the track is
+   * L long: outbound covers 0→L, and the return leg continues through
+   * L→2L. Collapsing both directions onto one number is what makes "are
+   * these two trains spaced apart?" a single subtraction.
+   */
+  private cycleLength(line: Line): number {
+    return line.direction === "bidirectional" ? line.length * 2 : line.length;
+  }
+
+  private phaseOf(vehicle: Vehicle, line: Line): number {
+    if (line.direction !== "bidirectional") return vehicle.dist;
+    return vehicle.dir === 1 ? vehicle.dist : line.length * 2 - vehicle.dist;
+  }
+
+  /**
+   * Drop a vehicle into the largest gap in the line's current dispatch.
+   *
+   * Every vehicle used to launch from the same standing start, and because
+   * `nextSpeed` is a pure function of position, same-model vehicles then
+   * followed byte-identical trajectories forever — four trains ran as two,
+   * and buying more delivered no service at all while `updateLineHeadway`
+   * happily divided the cycle time by the fleet size. Filling the widest gap
+   * converges on even spacing as the fleet grows, and never moves a vehicle
+   * that is already running with passengers aboard.
+   */
+  private freshDispatchPhase(line: Line): number {
+    const cycle = this.cycleLength(line);
+    if (cycle <= 0) return 0;
+
+    const phases: number[] = [];
+    for (const id of line.vehicleIds) {
+      const other = this.vehicles.find((item) => item.id === id);
+      if (other) phases.push(this.phaseOf(other, line));
+    }
+    if (phases.length === 0) return 0;
+
+    phases.sort((a, b) => a - b);
+    // Seed with the wrap-around gap, so the search covers the whole loop.
+    let bestStart = phases[phases.length - 1];
+    let bestGap = cycle - phases[phases.length - 1] + phases[0];
+    for (let i = 1; i < phases.length; i++) {
+      const gap = phases[i] - phases[i - 1];
+      if (gap > bestGap) {
+        bestGap = gap;
+        bestStart = phases[i - 1];
+      }
+    }
+    return (bestStart + bestGap / 2) % cycle;
+  }
+
+  /** Seat a vehicle at a point in the round trip, resolving track position. */
+  private placeAtPhase(vehicle: Vehicle, line: Line, phase: number): void {
+    const outbound =
+      line.direction !== "bidirectional" || phase <= line.length;
+    const dist = outbound ? phase : line.length * 2 - phase;
+
+    // The station *behind* the vehicle, since moveVehicles steers toward
+    // `atStationIdx + dir`.
+    const last = line.stationDist.length - 1;
+    let idx = 0;
+    if (outbound) {
+      while (idx < last && line.stationDist[idx + 1] <= dist) idx++;
+    } else {
+      idx = last;
+      while (idx > 0 && line.stationDist[idx - 1] >= dist) idx--;
+    }
+
+    vehicle.dist = dist;
+    vehicle.prevDist = dist;
+    vehicle.speed = 0;
+    vehicle.dir = outbound ? 1 : -1;
+    vehicle.atStationIdx = idx;
+    // Only the vehicle that starts at a terminal waits out a dwell; one
+    // placed mid-line is joining a service already in motion.
+    const atTerminal = dist === line.stationDist[idx];
+    vehicle.state = atTerminal ? "dwelling" : "running";
+    vehicle.dwellRemaining = atTerminal
+      ? getTransitModeSpec(line.mode, line.alignment).dwellSec
+      : 0;
+  }
+
   assignVehicle(vehicleId: number, lineId: number): boolean {
     const vehicle = this.vehicles.find((item) => item.id === vehicleId);
     const line = this.lines.get(lineId);
@@ -467,20 +557,8 @@ export class Simulation {
     ) {
       return false;
     }
-    const fleetIndex = line.vehicleIds.length;
-    const startsInbound =
-      line.direction === "bidirectional" && fleetIndex % 2 === 1;
     vehicle.lineId = line.id;
-    vehicle.dist = startsInbound ? line.length : 0;
-    vehicle.prevDist = vehicle.dist;
-    vehicle.speed = 0;
-    vehicle.dir = startsInbound ? -1 : 1;
-    vehicle.state = "dwelling";
-    vehicle.atStationIdx = startsInbound ? line.stationIds.length - 1 : 0;
-    vehicle.dwellRemaining = getTransitModeSpec(
-      line.mode,
-      line.alignment,
-    ).dwellSec;
+    this.placeAtPhase(vehicle, line, this.freshDispatchPhase(line));
     line.vehicleIds.push(vehicle.id);
     this.updateLineHeadway(line);
     this.planner.rebuild(this.lines, this.stations);
@@ -513,6 +591,7 @@ export class Simulation {
     // carrying, so they are re-planned against the network as it now is —
     // without their old line if that was its last vehicle.
     this.rerouteStranded(strandedIds, station);
+    this.rescueUnservableWaiters();
     this.recalculateEnvironment();
     this.networkVersion++;
     return true;
@@ -562,6 +641,91 @@ export class Simulation {
       this.passengers.delete(passengerId);
       this.kpis.unservedTrips++;
     }
+  }
+
+  /**
+   * Re-plan everyone queued for a line that no longer runs.
+   *
+   * `rerouteStranded` only rescues the people who were physically aboard the
+   * vehicle being withdrawn. The larger group is the queue already standing
+   * on the platforms: their legs still name a line whose `headwaySec` has
+   * just gone to zero, so `planner.rebuild` drops it and no vehicle will
+   * ever match them again. Measured at 1,062 passengers frozen on a
+   * single-line network, still there fourteen sim-hours later — never
+   * completed, never counted unserved, and rescanned by every subsequent
+   * stop at that station.
+   *
+   * Walkers get the same treatment, since they would otherwise join a dead
+   * queue the moment they arrived.
+   */
+  private rescueUnservableWaiters(): void {
+    const dead = new Set<number>();
+    for (const line of this.lines.values()) {
+      if (line.headwaySec === 0) dead.add(line.id);
+    }
+    if (dead.size === 0) return;
+
+    const boardsDeadLine = (passenger: Passenger): boolean => {
+      const leg = passenger.legs[passenger.legIndex];
+      return leg !== undefined && dead.has(leg.lineId);
+    };
+
+    /** Re-plan from `fromStationId`; false if the network cannot serve them. */
+    const replan = (passenger: Passenger, fromStationId: number): boolean => {
+      const destinationId =
+        passenger.legs[passenger.legs.length - 1]?.alightStationId;
+      if (destinationId === undefined) return false;
+      if (destinationId === fromStationId) return false;
+      const replanned = this.planner.plan(
+        [{ stationId: fromStationId, walkSec: 0 }],
+        [{ stationId: destinationId, walkSec: 0 }],
+        this.lines,
+      );
+      if (!replanned) return false;
+      passenger.legs = replanned.legs;
+      passenger.legIndex = 0;
+      return true;
+    };
+
+    for (const station of this.stations.values()) {
+      const keep: number[] = [];
+      for (const pid of station.waiting) {
+        const passenger = this.passengers.get(pid);
+        if (!passenger) continue;
+        if (!boardsDeadLine(passenger)) {
+          keep.push(pid);
+          continue;
+        }
+        if (replan(passenger, station.id)) {
+          passenger.phase = "waiting";
+          keep.push(pid);
+        } else {
+          this.passengers.delete(pid);
+          this.kpis.unservedTrips++;
+        }
+      }
+      station.waiting = keep;
+    }
+
+    const stillWalking: number[] = [];
+    for (const pid of this.walking) {
+      const passenger = this.passengers.get(pid);
+      if (!passenger) continue;
+      if (!boardsDeadLine(passenger)) {
+        stillWalking.push(pid);
+        continue;
+      }
+      // They are still between the zone and the platform, so re-plan from
+      // the station they were walking to — the one leg that is still valid.
+      const heading = passenger.legs[passenger.legIndex]?.boardStationId;
+      if (heading !== undefined && replan(passenger, heading)) {
+        stillWalking.push(pid);
+      } else {
+        this.passengers.delete(pid);
+        this.kpis.unservedTrips++;
+      }
+    }
+    this.walking = stillWalking;
   }
 
   private updateLineHeadway(line: Line): void {
@@ -968,6 +1132,18 @@ export class Simulation {
                 ?.walkSec ?? 0,
           }
         : null;
+      // Map iterates in insertion order, so the first key is the least
+      // recently used one — given the re-insert on hit below.
+      if (this.planCache.size >= PLAN_CACHE_LIMIT) {
+        const oldest = this.planCache.keys().next();
+        if (!oldest.done) this.planCache.delete(oldest.value);
+      }
+      this.planCache.set(cacheKey, cached);
+    } else {
+      // Re-insert to move this pair to the back of the eviction queue. A
+      // delete+set pair is O(1) and vanishingly cheap next to the Dijkstra
+      // it is protecting.
+      this.planCache.delete(cacheKey);
       this.planCache.set(cacheKey, cached);
     }
     if (!cached) {

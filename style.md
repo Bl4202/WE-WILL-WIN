@@ -1,42 +1,92 @@
 # Metro — Visual Style Guide
 
-> Companion to `Transit_Authority_GDD.md`. This document is the single source of truth for visual design: color, type, spacing, elevation, and component styling. Anything not covered here should follow the spirit of §5 (UI/UX) in the GDD — map-first, low-chrome, data-dense but never noisy.
+*This document uses ASD-STE100 Simplified Technical English. The code blocks
+are source code, and they keep their original text.*
+
+> This is a companion to `Transit_Authority_GDD.md`. This document is the one
+> source of truth for the visual design. It covers the colour, the type, the
+> space, the elevation, and the components. For an item that this document does
+> not cover, obey §5 of the GDD, which covers the interface. That section is
+> map-first, with little chrome. It holds much data, but it is never noisy.
 
 ---
 
-## 1. Design Philosophy and Core Principles
+## 1. Design philosophy and core principles
 
-Metro is a **serious transit simulation wearing a transit-diagram's clothes**. The player spends 95% of their time looking at the map; every UI element exists to either feed that view or get out of its way. Two principles govern everything below.
+Metro is a serious transit simulation with the appearance of a transit diagram.
+The player looks at the map for 95% of the time. Each interface element must
+give data to that view or stay out of it. Two principles control all the rules
+below.
 
-### 1.1 Map-First Canvas Architecture
+### 1.1 The map is the canvas
 
-The map is not a panel inside the app — **the map *is* the app**. All UI is a set of floating overlays that sit on top of a full-bleed, edge-to-edge map canvas.
+The map is not a panel in the application. **The map *is* the application.** The
+interface is a set of overlays above a map canvas that fills the full screen.
 
-- **No chrome frame.** There is no fixed header bar that claims permanent vertical space, no sidebar that pushes the map viewport off-center. The map canvas always spans `100vw × 100vh` beneath everything else.
-- **Overlays float, they don't dock.** Panels (toolbars, search, focus/inspector panels, legends) are absolutely-positioned cards with margin from the viewport edge (typically `12–16px`), not elements that reflow the canvas. Collapsing or hiding a panel never resizes the map.
-- **Glass, not paint.** Every overlay uses translucency + backdrop-blur so the map's color and motion stay visible *through* the UI. This keeps the player spatially oriented even while a panel has focus. See §2.3.
-- **Contextual, not persistent.** Detail panels (station/line inspector) only appear when something is selected, and disappear cleanly when it isn't. The chrome that *is* always-on (time controls, KPI glance strip, mode rail) is kept minimal and thin — a strip, not a bar.
-- **Click-through where sensible.** Read-only informational overlays (e.g. the focus/inspector panel) should not block map interaction underneath them unless they contain interactive controls.
+- **There is no chrome frame.** There is no fixed header bar that takes
+  permanent vertical space. There is no sidebar that moves the map away from
+  the centre. The map canvas is always `100vw × 100vh` below the other
+  elements.
+- **The overlays float. They do not dock.** The panels are cards at absolute
+  positions, with a margin from the edge of the screen. The usual margin is
+  `12–16px`. A panel does not change the size of the canvas. If you collapse a
+  panel or hide it, the map does not change its size. The panels are the
+  toolbars, the search field, the inspector panels, and the legends.
+- **Use glass, not paint.** Each overlay is translucent and has a blur behind
+  it. Thus the player sees the colour and the movement of the map *through*
+  the interface. This keeps the player oriented while a panel has the focus.
+  See §2.3.
+- **The panels are contextual, not permanent.** A detail panel for a station or
+  a line appears only after the player selects an object. It goes away when the
+  player deselects the object. The permanent chrome is the time controls, the
+  KPI strip, and the mode rail. Keep that chrome thin and small. It is a strip,
+  not a bar.
+- **Let the pointer through where this is correct.** An overlay that only shows
+  data must not stop the map below it. An example is the inspector panel. An
+  overlay with controls in it can stop the map.
 
-### 1.2 Transit Diagram Aesthetic
+### 1.2 The transit diagram appearance
 
-The player-facing map should read like a **world-class transit map** (Citymapper / Mapbox Transit / Chicago "L" diagrams — see reference screenshots) rendered live: vibrant, legible at a glance, and calm under density.
+The map must look like a transit map of the highest quality, but live. Examples
+are Citymapper, Mapbox Transit, and the Chicago "L" diagrams. See the reference
+screenshots. The map must be strong in colour, easy to read, and calm when it
+holds much data.
 
-- **Ultra-clear legibility first.** Line strokes are thick enough to trace at a glance (`4–6px` at default zoom), station markers are high-contrast white against the dark basemap, and labels never overlap without a deliberate collision-avoidance pass.
-- **Vibrant, purposeful color coding.** Every line gets one saturated, distinct hue from the categorical palette (§2.4). Color is the primary way the player distinguishes lines — never rely on line style alone to carry meaning that color could carry.
-- **High-contrast badges over subtle ones.** Line badges, mode icons, and status pills use solid fills and white/near-white text — never low-contrast gray-on-gray. If it's a data element the player scans quickly, it must pass at a glance, not on close reading.
-- **Compact utility.** Controls are icon-first, dense, and tooltip-labeled rather than verbosely spelled out. A toolbar button is `36–40px` square, not a labeled rectangle.
-- **Low visual clutter.** Basemap detail recedes (dimmed labels, muted street grid) so the transit network — the player's *work* — is always the brightest, highest-contrast thing on screen. Decorative chrome (gradients, drop shadows, iconography) is used sparingly and only to establish elevation, never for ornament.
+- **Legibility is first.** A line stroke is thick enough to follow with the
+  eye. It is `4–6px` at the default zoom. A station marker is white, with a
+  high contrast against the dark basemap. Labels do not touch each other. A
+  pass to prevent a collision controls this.
+- **The colour has a purpose.** Each line gets one strong, separate colour from
+  the palette in §2.4. Colour is the primary method that shows the difference
+  between two lines. Never use the stroke style alone to carry data that the
+  colour can carry.
+- **Use badges with a high contrast.** The line badges, the mode icons, and the
+  status pills have solid fills and white or almost-white text. Never use grey
+  text on a grey background. The player reads these elements quickly. Thus each
+  one must be legible at a glance, not after a careful examination.
+- **Keep the controls compact.** A control has an icon first. The controls are
+  dense, and a tooltip gives the words. A toolbar button is a square of
+  `36–40px`. It is not a rectangle with a label.
+- **Keep the screen clean.** The detail of the basemap must be weak. Make its
+  labels dark and its street grid quiet. Thus the transit network, which is the
+  *work* of the player, is always the brightest element on the screen. Use the
+  gradients, the shadows, and the icons very little. They show the elevation.
+  They are not decoration.
 
 ---
 
-## 2. Color System and Design Tokens
+## 2. The colour system and the design tokens
 
-### 2.1 Base Theme
+### 2.1 The base theme
 
-**Dark mode is the default and primary-designed experience** — it matches the Mapbox dark basemap the game is built around and makes saturated line colors pop. Light mode is a fully supported alternate theme, not an afterthought; every token below has a light-mode counterpart.
+**The dark mode is the default and the primary design.** It agrees with the
+dark Mapbox basemap of the game, and it makes the strong line colours clear.
+The light mode is a full alternative theme, not an addition at the end. Each
+token below has a light-mode equivalent.
 
-Theme is controlled by a `data-theme` attribute on `:root` (`"dark"` default, `"light"` opt-in), with `prefers-color-scheme` as the initial default when no explicit preference is stored.
+A `data-theme` attribute on `:root` controls the theme. The value `"dark"` is
+the default, and the value `"light"` is optional. If there is no stored
+preference, `prefers-color-scheme` gives the first value.
 
 ```css
 :root {
@@ -47,7 +97,7 @@ Theme is controlled by a `data-theme` attribute on `:root` (`"dark"` default, `"
 }
 ```
 
-### 2.2 Core CSS Variables
+### 2.2 The core CSS variables
 
 ```css
 :root {
@@ -133,9 +183,10 @@ Theme is controlled by a `data-theme` attribute on `:root` (`"dark"` default, `"
 }
 ```
 
-### 2.3 Surface & Overlay Colors — Frosted Glass Panels
+### 2.3 The surface colours — the glass panels
 
-Every floating panel (toolbar, sidebar, drawer, focus/inspector card, dropdown) uses the same recipe:
+Each panel uses the same recipe. This includes the toolbar, the sidebar, the
+drawer, the inspector card, and the dropdown.
 
 ```css
 .panel {
@@ -154,15 +205,28 @@ Every floating panel (toolbar, sidebar, drawer, focus/inspector card, dropdown) 
 }
 ```
 
-`saturate(1.4)` on the blur is deliberate — it keeps the map's colors from washing out to gray under the glass, which is what makes the pink/magenta and line-color accents still feel vibrant even through a panel.
+The `saturate(1.4)` value on the blur is deliberate. It stops the colours of
+the map when they become grey below the glass. Thus the pink accent, the
+magenta accent, and the line colours stay strong through a panel.
 
-**Fallback:** wrap `backdrop-filter` usage behind a `@supports` check; browsers without support get `--surface-panel-solid` at ~96% opacity instead of the translucent value.
+**If the browser does not support the blur:** put the `backdrop-filter` in a
+`@supports` block. A browser without support gets `--surface-panel-solid` at
+approximately 96% opacity. It does not get the translucent value.
 
-### 2.4 Transit Line Color System
+### 2.4 The colour system for the transit lines
 
-Two independent layers of meaning ride on a line's visual style: **color** (which specific line) and **stroke pattern** (which mode category, for the player's fast visual grouping — see the mode catalogue in GDD §3.3). Never rely on stroke pattern alone; always pair with a legend/badge.
+The visual style of a line carries two separate types of data. The **colour**
+gives the identity of the line. The **stroke pattern** gives the category of
+the mode, which lets the player group the lines quickly. See the mode catalogue
+in GDD §3.3. Never use the stroke pattern alone. Always add a legend or a
+badge.
 
-**Core categorical palette** (assigned to lines in rotation, order matters — chosen for maximum adjacent-hue separation, dark-bg contrast, and CVD (color-vision-deficiency) legibility):
+**The core palette.** The game assigns these colours to the lines in order. The
+order is important, because these colours give:
+
+- The maximum separation between two adjacent colours.
+- A good contrast on a dark background.
+- Good legibility for a person with a colour vision deficiency (CVD).
 
 | # | Name | Hex | Swatch |
 |---|------|-----|--------|
@@ -204,77 +268,99 @@ Two independent layers of meaning ride on a line's visual style: **color** (whic
 }
 ```
 
-**Mode-category defaults & stroke treatment.** When a new line of a given mode is created, it seeds from that mode's reserved slice of the palette above and adopts a default stroke pattern. The player may recolor freely; the pattern stays mode-locked (it's the accessible, colorblind-safe backup signal).
+**The default colour and stroke for each mode.** The player makes a new line of
+a given mode. The line then takes a colour from the part of the palette that
+the mode reserves. It also takes a default stroke pattern. The player can
+change the colour, but the pattern stays with the mode. The pattern is the
+backup signal for a person with a colour vision deficiency.
 
-| Mode | Seed colors (palette #) | Stroke weight | Stroke pattern | Notes |
+| Mode | Seed colours (palette #) | Stroke weight | Stroke pattern | Notes |
 |---|---|---|---|---|
-| **Metro** (heavy rail) | 1, 2, 3, 5 | `6px` | solid | Thickest stroke — trunk-line priority in z-order too |
-| **Express** (regional/limited) | 6, 8 | `5px` | solid + chevron ticks every `40px` | Chevrons imply direction/speed |
-| **Light Rail** | 7, 13 | `5px` | solid | Same weight as Express, no ticks |
-| **Regional Rail** | 14, 10 | `5px` | long dash (`14px on / 6px off`) | Reads as "leaves the dense core" |
-| **Bus / BRT** | 12, 15 | `3px` | short dash (`6px on / 5px off`) | Thinner — secondary to rail in visual hierarchy |
-| **Ferry** | 13 (teal), 7 (cyan) | `4px` | dotted (`2px dot / 6px gap`), drawn with a slight wave `stroke-dasharray` animation optional | Only mode allowed a "water" motif |
+| **Metro** (heavy rail) | 1, 2, 3, 5 | `6px` | solid | The thickest stroke. It is also first in the z-order. |
+| **Express** (regional or limited) | 6, 8 | `5px` | solid, with chevron ticks each `40px` | The chevrons show the direction and the speed. |
+| **Light Rail** | 7, 13 | `5px` | solid | The same weight as Express, but with no ticks. |
+| **Regional Rail** | 14, 10 | `5px` | long dash (`14px on / 6px off`) | This shows that the line leaves the dense centre. |
+| **Bus / BRT** | 12, 15 | `3px` | short dash (`6px on / 5px off`) | Thinner. It is below the rail in the visual order. |
+| **Ferry** | 13 (teal), 7 (cyan) | `4px` | dotted (`2px dot / 6px gap`). A light wave animation on the `stroke-dasharray` is optional. | This is the only mode with a water pattern. |
 
-Route selection state overrides color, never pattern: a selected/hovered line gets a `--shadow-2`-style glow (`filter: drop-shadow(0 0 6px <line-color>)`) plus a `+2px` width bump; deselected lines when *something else* is selected drop to `40%` opacity rather than changing hue.
+The selection state changes the colour, never the pattern. A line that the
+player selects or points at gets a glow like `--shadow-2`, which is
+`filter: drop-shadow(0 0 6px <line-color>)`. Its width also increases by `2px`.
+When the player selects a different object, the other lines decrease to `40%`
+opacity. Their colour does not change.
 
-### 2.5 Station Markers
+### 2.5 The station markers
 
-Matches the reference transit-map style directly:
+These agree with the reference transit map.
 
 | Marker | Meaning | Style |
 |---|---|---|
-| **Open white circle**, `8px` diameter | Regular waypoint / local stop | `fill: #f4f6f8`, `stroke: var(--color-canvas)` `2px` |
-| **White diamond**, `11px` | Interchange / transfer station (2+ lines) | `fill: #ffffff`, `stroke: #0d1116` `2px`, rotated 45° square |
-| **Filled colored ring**, `13px` | Line terminus / major hub | Fill = line color, `stroke: #ffffff` `2.5px`, halo `shadow-1` |
-| **Selected station** | Any of the above, selected | `stroke: var(--accent-blue)`, `3px`, plus `--shadow-focus-ring`-style outer glow |
+| **Open white circle**, `8px` diameter | A local stop | `fill: #f4f6f8`, `stroke: var(--color-canvas)` `2px` |
+| **White diamond**, `11px` | A transfer station, with 2 or more lines | `fill: #ffffff`, `stroke: #0d1116` `2px`, a square that turns 45° |
+| **Filled colour ring**, `13px` | The end of a line, or a large hub | Fill is the line colour, `stroke: #ffffff` `2.5px`, halo `shadow-1` |
+| **Selected station** | Any marker above, after selection | `stroke: var(--accent-blue)`, `3px`, and an outer glow like `--shadow-focus-ring` |
 
-### 2.6 Borders and Shadows — Elevation Layers
+### 2.6 The borders and the shadows — the elevation levels
 
-Four elevation tiers, used consistently so the player can read "what's on top of what" instantly:
+There are four elevation levels. Use them consistently. Thus the player can see
+immediately which element is above another element.
 
 | Level | Token | Use | Border | Shadow |
 |---|---|---|---|---|
-| 0 | — | Map canvas itself | none | none |
-| 1 | `--shadow-1` | Inline chips, badges, list rows | `--border-subtle` | flat, barely-there |
-| 2 | `--shadow-2` | Toolbars, glance strip, mode rail | `--border-default` | soft, close |
-| 3 | `--shadow-3` | Floating panels, drawers, focus/inspector cards | `--border-default` | soft, medium spread — **default panel elevation** |
-| 4 | `--shadow-4` | Modals, dropdown menus, command palettes, dragged elements | `--border-strong` | pronounced, large spread |
+| 0 | — | The map canvas | none | none |
+| 1 | `--shadow-1` | Chips, badges, list rows | `--border-subtle` | flat, very light |
+| 2 | `--shadow-2` | Toolbars, the KPI strip, the mode rail | `--border-default` | soft, close |
+| 3 | `--shadow-3` | Panels, drawers, inspector cards | `--border-default` | soft, medium. **This is the default panel elevation.** |
+| 4 | `--shadow-4` | Modals, dropdown menus, command palettes, elements that the player drags | `--border-strong` | strong, large |
 
-Borders are always `1px`, always a translucent white/black (never a saturated color) so they read as "edge of glass," not decoration. The one exception is `--border-focus`, used solely for keyboard-focus and active-drag outlines.
+A border is always `1px`. It is always a translucent white or a translucent
+black. It is never a strong colour. Thus it looks like the edge of the glass,
+not like decoration. There is one exception: `--border-focus`. Use it only for
+the keyboard focus and for an active drag.
 
 ---
 
-## 3. Typography and Spatial System
+## 3. The type and the space
 
-### 3.1 Font Selection
+### 3.1 The font
 
-- **Primary UI typeface: [Inter](https://rsms.me/inter/).** Clean, geometric-humanist, excellent hinting at small sizes, huge language coverage, and built-in tabular figures — ideal for a UI dense with numbers (KPIs, headways, distances, clocks).
-- **Fallback stack:** `"Inter", "Segoe UI", system-ui, -apple-system, sans-serif` (keeps native OS rendering as a graceful degrade, matching the current prototype's stack).
-- **Numeric/tabular contexts** (clock, KPI counters, headway/length readouts, coordinates): always set `font-variant-numeric: tabular-nums;` so digits don't jitter as values tick over in real time.
-- **Do not** introduce a second display/serif face. One family, weight and size do all the hierarchy work.
+- **The primary interface font is [Inter](https://rsms.me/inter/).** It is
+  clean and geometric. It has good hinting at small sizes and a large language
+  coverage. It also has tabular figures. Thus it is correct for an interface
+  with many numbers, such as the KPIs, the headways, the distances, and the
+  clock.
+- **The fallback stack is:** `"Inter", "Segoe UI", system-ui, -apple-system,
+  sans-serif`. This keeps the native rendering of the operating system as a
+  fallback. It agrees with the stack of the current prototype.
+- **For the numbers,** always set `font-variant-numeric: tabular-nums;`. Thus
+  the digits do not move when a value changes in real time. This applies to the
+  clock, the KPI counters, the headway, the length, and the coordinates.
+- **Do not** add a second display font or a serif font. One family does all the
+  work with its weights and its sizes.
 
 ```css
 --font-ui: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
 --font-mono: "IBM Plex Mono", "Cascadia Code", monospace; /* debug/dev overlays only */
 ```
 
-### 3.2 Type Hierarchy
+### 3.2 The type levels
 
-| Role | Size | Weight | Line-height | Letter-spacing | Color token |
+| Role | Size | Weight | Line-height | Letter-spacing | Colour token |
 |---|---|---|---|---|---|
-| Panel title (h3-equivalent) | `14px` | 600 | 1.3 | 0 | `--text-primary` (or accent for emphasis titles) |
-| Section label (all-caps eyebrow) | `11px` | 600 | 1.2 | `0.06em` | `--text-tertiary` |
-| Station / line list item | `13px` | 500 | 1.4 | 0 | `--text-primary` |
+| Panel title (equal to h3) | `14px` | 600 | 1.3 | 0 | `--text-primary`, or an accent for emphasis |
+| Section label (capitals) | `11px` | 600 | 1.2 | `0.06em` | `--text-tertiary` |
+| Station or line list item | `13px` | 500 | 1.4 | 0 | `--text-primary` |
 | Line badge text | `12px` | 700 | 1 | `0.01em` | `--text-on-accent` |
-| Button label | `13px` | 600 | 1 | 0 | context-dependent |
-| Body / description text | `13px` | 400 | 1.5 | 0 | `--text-secondary` |
-| Micro-label (tooltips, chip captions, timestamps) | `11px` | 500 | 1.3 | `0.02em` | `--text-tertiary` |
+| Button label | `13px` | 600 | 1 | 0 | it changes with the context |
+| Body text | `13px` | 400 | 1.5 | 0 | `--text-secondary` |
+| Small label (tooltips, chip captions, times) | `11px` | 500 | 1.3 | `0.02em` | `--text-tertiary` |
 | KPI headline number | `16–20px` | 700 | 1.1 | 0 | `--accent-primary` or `--accent-blue` |
-| Keyboard-shortcut chip | `10px` | 600 | 1 | 0 | `--text-tertiary` on `--surface-sunken` |
+| Keyboard shortcut chip | `10px` | 600 | 1 | 0 | `--text-tertiary` on `--surface-sunken` |
 
-### 3.3 Spatial Grid — 4px / 8px Scale
+### 3.3 The space grid — 4px and 8px
 
-All padding, gaps, margins, and offsets are multiples of `4px`. Prefer the `8px` step for macro layout, `4px` for micro/internal component spacing.
+Each padding, gap, margin, and offset is a multiple of `4px`. Use the `8px`
+step for the large layout. Use the `4px` step for the space in a component.
 
 ```css
 --space-1: 4px;
@@ -289,14 +375,17 @@ All padding, gaps, margins, and offsets are multiples of `4px`. Prefer the `8px`
 --space-16: 64px;
 ```
 
-**Conventions:**
-- Panel outer padding: `--space-4` (`16px`), tight variants (toolbars) use `--space-2` (`8px`).
-- Gap between list rows: `--space-1` to `--space-2`.
-- Panel-to-viewport-edge margin: `--space-3` (`12px`), matching the current `#focus-panel` implementation.
-- Icon-to-label gap in buttons: `--space-2` (`8px`).
-- Section-to-section gap inside a panel: `--space-4`–`--space-5`.
+**Rules:**
 
-### 3.4 Z-Index Scale
+- The outer padding of a panel is `--space-4` (`16px`). A tight variant, such
+  as a toolbar, uses `--space-2` (`8px`).
+- The gap between two list rows is `--space-1` to `--space-2`.
+- The margin between a panel and the edge of the screen is `--space-3`
+  (`12px`). This agrees with the current `#focus-panel`.
+- The gap between an icon and its label in a button is `--space-2` (`8px`).
+- The gap between two sections in a panel is `--space-4` to `--space-5`.
+
+### 3.4 The z-index levels
 
 ```css
 --z-canvas: 0;             /* map tiles / base render layer */
@@ -316,58 +405,134 @@ All padding, gaps, margins, and offsets are multiples of `4px`. Prefer the `8px`
 
 ---
 
-## 4. UI Component Specifications
+## 4. The components
 
-### 4.1 Floating Sidebar and Drawers
+### 4.1 The sidebar and the drawers
 
-- **Structure:** glassmorphic header (`--surface-raised`, `--shadow-2`, sticky) + scrollable body (`--surface-panel`) + optional footer action row.
-- **Collapse behavior:** drawers collapse to an icon rail (`48px` wide) rather than fully hiding, so navigation is always one click away. Collapse/expand animates `width` over `200ms ease-out`.
-- **Navigation tabs:** horizontal icon+label tabs in the header, active tab indicated by a `2px` bottom border in `--accent-primary` plus a subtle `--accent-primary-muted` background wash — never color-only (add the border for contrast-mode/CVD safety).
-- **Scrollable content:** `overflow-y: auto`, custom thin scrollbar (`6px`, `--border-strong` thumb, transparent track), momentum scrolling enabled. Content padding `--space-4`, row gap `--space-1`.
-- **Resizable drawers** (if applicable) get an `8px` drag handle at the edge, cursor `col-resize`, highlight on hover with `--accent-blue-muted`.
+- **Structure:** a header with glass (`--surface-raised`, `--shadow-2`, and it
+  stays in position), then a body that scrolls (`--surface-panel`), then an
+  optional footer with the actions.
+- **Collapse:** a drawer collapses to an icon rail of `48px`. It does not hide
+  fully. Thus the navigation is always one click away. The collapse animates
+  the `width` for `200ms ease-out`.
+- **Tabs:** the header holds horizontal tabs with an icon and a label. The
+  active tab has a bottom border of `2px` in `--accent-primary`, and a light
+  background of `--accent-primary-muted`. Never use the colour alone. Add the
+  border for a high-contrast mode and for a person with a colour vision
+  deficiency.
+- **The content that scrolls:** use `overflow-y: auto` and a thin scrollbar of
+  `6px`. The thumb is `--border-strong` and the track is transparent. Momentum
+  scroll is on. The content padding is `--space-4` and the row gap is
+  `--space-1`.
+- **A drawer that the player can resize** gets a drag handle of `8px` at its
+  edge. The cursor is `col-resize`. The handle becomes brighter with
+  `--accent-blue-muted` when the pointer is above it.
 
-### 4.2 Top Header and Search Bar
+### 4.2 The header and the search field
 
-- **Search input:** pill-shaped (`border-radius: 999px`), `height: 40px`, `--surface-sunken` background, `--border-subtle` border, left-aligned search icon at `--space-3` inset, placeholder text in `--text-tertiary`.
-- **Keyboard shortcut chip:** right-aligned inside the pill (e.g. `⌘K` / `Ctrl K`), rendered as a small `--surface-raised` chip, `10px` monospace-ish label, `4px` corner radius, sits flush against the input's right padding.
-- **Quick search dropdown:** appears below the pill with `--space-1` gap, `--surface-raised` background, `--shadow-4`, `--z-dropdown`. Results grouped by type (Stations / Lines / Zones) with `11px` uppercase group labels (`--text-tertiary`). Active/hovered row gets `--surface-hover` and a `2px` left accent bar in `--accent-primary`.
-- **Focus state:** on focus, the pill border transitions to `--border-focus` and gains `--shadow-focus-ring` over `150ms ease`.
+- **The search input:** the shape is a pill (`border-radius: 999px`), and the
+  `height` is `40px`. The background is `--surface-sunken` and the border is
+  `--border-subtle`. The search icon is at the left, inset by `--space-3`. The
+  placeholder text is `--text-tertiary`.
+- **The keyboard shortcut chip:** it is at the right, in the pill. Examples are
+  `⌘K` and `Ctrl K`. It is a small chip of `--surface-raised`, with a `10px`
+  label that looks like a monospace font, and a `4px` corner radius. It touches
+  the right padding of the input.
+- **The dropdown for the search:** it appears below the pill with a gap of
+  `--space-1`. It has a `--surface-raised` background, `--shadow-4`, and
+  `--z-dropdown`. The results are in groups by type: Stations, Lines, Zones.
+  The group labels are `11px` capitals in `--text-tertiary`. The active row has
+  `--surface-hover` and an accent bar of `2px` at its left in
+  `--accent-primary`.
+- **The focus state:** at the focus, the border of the pill changes to
+  `--border-focus` and gets `--shadow-focus-ring`. The change takes `150ms
+  ease`.
 
-### 4.3 Toolbars and Map Controls
+### 4.3 The toolbars and the map controls
 
-Directly modeled on the reference screenshot's top-left control cluster (fullscreen / save / undo icons + basemap-style radio list):
+These agree with the control group at the top left of the reference screenshot.
+That group has icons for the full screen, the save, and the undo, and a radio
+list for the basemap style.
 
-- **Container:** compact `.panel` (§2.3), `border-radius: 10px`, padding `--space-2`.
-- **Icon button group (row):** square buttons, `32px`, no visible border between adjacent buttons in a group — separated only by `--space-1` gap or a `1px` `--border-subtle` divider for tightly-packed groups.
-- **Active state:** active/toggled control gets `--accent-primary-muted` fill + `--accent-primary` icon color (matches the filled amber/blue dot seen in reference — but standardized to the primary pink accent for anything that represents "current tool/mode"). Reserve `--accent-blue` for informational/selection state, `--accent-primary` for the player's *active input mode*.
-- **Radio-style option list** (e.g. basemap style picker): standard radio input restyled to a `14px` ring, checked state fills with `--accent-primary`, label text `13px` `--text-primary`, row height `28px`, `4px` vertical gap.
-- **Checkbox rows** (e.g. layer toggles like "Waypoints"): `14px` box, `4px` radius, checked state = `--accent-primary` fill with a white check glyph.
-- **Tooltips:** every icon-only control has a tooltip, `150ms` delay before show, `--surface-raised` background, `--shadow-2`, `11px` text, arrow pointing to trigger, `--z-tooltip`.
-- **Map zoom/compass controls:** bottom-right or top-right stacked icon buttons, same `32px` square spec, grouped in a single rounded container.
+- **The container:** a compact `.panel` (§2.3), with `border-radius: 10px` and
+  a padding of `--space-2`.
+- **A row of icon buttons:** the buttons are squares of `32px`. There is no
+  border between two adjacent buttons in a group. A gap of `--space-1`
+  separates them. A group with no gap can use a divider of `1px` in
+  `--border-subtle`.
+- **The active state:** the active control gets an `--accent-primary-muted`
+  fill and an `--accent-primary` icon. This agrees with the filled dot in the
+  reference, but the colour is now the primary pink. Use `--accent-blue` for
+  data and for the selection state. Use `--accent-primary` for the *active
+  input mode* of the player.
+- **A radio list**, for example the basemap style: change the radio input to a
+  ring of `14px`. The checked state fills with `--accent-primary`. The label is
+  `13px` in `--text-primary`. The row height is `28px` and the vertical gap is
+  `4px`.
+- **A checkbox row**, for example a layer control such as "Waypoints": the box
+  is `14px` with a `4px` radius. The checked state is an `--accent-primary`
+  fill with a white check glyph.
+- **The tooltips:** each control with an icon and no label has a tooltip. The
+  delay before it appears is `150ms`. It has a `--surface-raised` background,
+  `--shadow-2`, `11px` text, an arrow that points at the control, and
+  `--z-tooltip`.
+- **The zoom and compass controls:** these are at the bottom right or the top
+  right. They are a group of icon buttons in one round container. They are
+  squares of `32px`, as above.
 
-### 4.4 Transit Badges and Line Indicators
+### 4.4 The badges and the line indicators
 
-- **Line badge (pill):** `border-radius: 999px`, `padding: 2px 10px`, background = line color at full saturation, text = `--text-on-accent`, `12px` weight 700. Used inline in lists, tooltips, and the inspector panel header.
-- **Line badge (square/route-number style):** for numbered lines, `24×24px`, `border-radius: 6px`, background = line color, centered bold number, white text — mirrors real-world route bullets.
-- **Station pill:** `--surface-raised` background, `1px` `--border-default`, `border-radius: 999px`, `padding: 4px 10px`, contains a small colored dot (`6px`) per serving line + station name, `13px` text.
-- **Connection/transfer indicator:** stacked overlapping small circles (`10px`, `-4px` overlap) in each connecting line's color, white `1.5px` stroke to separate them — used wherever a station serves 2+ lines in list contexts.
-- **Draggable reorder handle:** `⠿` grip icon (or 6-dot grid), `16px`, `--text-tertiary` default, `--text-secondary` on hover, `cursor: grab` (`grabbing` while active). Dragged row gets `--shadow-3`, slight `1.02` scale, and drops to `--z-dropdown` while in motion; drop-target gap animates open over `150ms`.
-- **Status/KPI pill:** small rounded rect, semantic color background at `16%` opacity (`--color-success`/`--color-warning`/`--color-danger` muted variants), full-opacity text and left dot indicator.
+- **A line badge (pill):** `border-radius: 999px` and `padding: 2px 10px`. The
+  background is the full line colour and the text is `--text-on-accent`, at
+  `12px` and weight 700. Use it in lists, in tooltips, and in the header of the
+  inspector panel.
+- **A line badge (square):** for a line with a number, the size is `24×24px`
+  with `border-radius: 6px`. The background is the line colour, the number is
+  bold and white, and it is at the centre. This agrees with a real route
+  bullet.
+- **A station pill:** the background is `--surface-raised`, the border is
+  `1px` in `--border-default`, `border-radius: 999px`, and `padding: 4px 10px`.
+  It contains a small dot of `6px` for each line at the station, and then the
+  station name, at `13px`.
+- **A transfer indicator:** small circles of `10px` above each other, with an
+  overlap of `-4px`. Each circle has the colour of its line and a white stroke
+  of `1.5px` to separate it. Use this where a station has 2 or more lines in a
+  list.
+- **A drag handle:** the `⠿` grip icon, or a grid of 6 dots, at `16px`. The
+  default colour is `--text-tertiary`, and it becomes `--text-secondary` when
+  the pointer is above it. The cursor is `grab`, and it is `grabbing` during
+  the drag. The row that the player drags gets `--shadow-3`, a scale of `1.02`,
+  and `--z-dropdown`. The gap at the target opens in `150ms`.
+- **A status pill or a KPI pill:** a small rounded rectangle. The background is
+  a semantic colour at `16%` opacity: `--color-success`, `--color-warning`, or
+  `--color-danger`. The text is at full opacity, and there is a dot at its
+  left.
 
-### 4.5 Interactive States
+### 4.5 The interactive states
 
-Consistent, snappy, never sluggish — this is a real-time sim, the UI should feel like it too.
+The states must be consistent and quick. They must never be slow. This is a
+real-time simulation, and the interface must have the same quality.
 
 | State | Treatment |
 |---|---|
-| **Hover** | `background: var(--surface-hover)`; icons/text may lighten one step (`--text-secondary` → `--text-primary`). Transition `150ms ease-out`. |
-| **Active (pressed)** | `background: var(--surface-active)`, scale `0.97` on buttons, transition `100ms ease-out` (faster than hover — should feel immediate). |
-| **Selected / toggled on** | `--accent-primary-muted` background + `--accent-primary` text/icon/border. Persists until deselected, not just while pressed. |
-| **Focus-visible** | `outline: none; box-shadow: var(--shadow-focus-ring);` — **only** on `:focus-visible`, never on mouse click, to keep the map-first UI free of focus rings during normal pointer play. `200ms ease` transition. |
-| **Disabled** | `opacity: 0.45`, `cursor: not-allowed`, `color: var(--text-disabled)`, all hover/active transitions suppressed (`pointer-events: none` where safe). |
-| **Loading** | Content dims to `60%` opacity, a `14px` spinner (`--accent-primary` stroke on `--border-subtle` track) fades in after a `300ms` delay (avoids flicker on fast loads). |
+| **Pointer above** | `background: var(--surface-hover)`. The icon or the text can become brighter by one step (`--text-secondary` → `--text-primary`). The change takes `150ms ease-out`. |
+| **Pressed** | `background: var(--surface-active)`, and a scale of `0.97` on a button. The change takes `100ms ease-out`. This is faster than the pointer state, thus the button feels immediate. |
+| **Selected** | An `--accent-primary-muted` background, and `--accent-primary` for the text, the icon, and the border. This stays until the player deselects the element. It is not only for the time of the press. |
+| **Keyboard focus** | `outline: none; box-shadow: var(--shadow-focus-ring);`. Use this **only** on `:focus-visible`, never on a mouse click. Thus the map-first interface has no focus rings during normal play. The change takes `200ms ease`. |
+| **Disabled** | `opacity: 0.45`, `cursor: not-allowed`, `color: var(--text-disabled)`. Stop all the pointer and press changes. Use `pointer-events: none` where this is safe. |
+| **Loading** | The content decreases to `60%` opacity. A spinner of `14px` appears after a delay of `300ms`. Its stroke is `--accent-primary` on a `--border-subtle` track. The delay prevents a flicker on a fast load. |
 
-**Transition timing standard:** all micro-interactions (hover, focus, toggle, color shifts) use **`150–250ms`**, `ease-out` for entrances/expansions, `ease-in` for exits/collapses. Panel open/close and drawer collapse sit at the higher end (`200–250ms`); button/badge state changes sit at the lower end (`150ms`). Never animate `width`/`height` directly on high-frequency elements (KPI counters, live vehicle glyphs) — those update via text/transform only, at simulation tick rate, with no CSS transition (they'd fight the sim's own 4 Hz cadence — see GDD §4.3).
+**The standard time for a change:** each small interaction takes **`150–250ms`**.
+This includes the pointer state, the focus, a toggle, and a colour change. Use
+`ease-out` when an element appears or becomes larger. Use `ease-in` when an
+element goes away or becomes smaller. A panel or a drawer uses the longer times
+(`200–250ms`). A button or a badge uses the shorter time (`150ms`).
+
+Never animate the `width` or the `height` of an element that changes
+frequently. This includes the KPI counters and the live vehicle glyphs. Change
+those elements with text or with a transform only, at the rate of the
+simulation tick, and with no CSS transition. A CSS transition fights the 4 Hz
+rate of the simulation. See GDD §4.3.
 
 ```css
 :root {
@@ -379,9 +544,11 @@ Consistent, snappy, never sluggish — this is a real-time sim, the UI should fe
 
 ---
 
-## 5. Tailwind Token Mapping
+## 5. The Tailwind token map
 
-For teams using Tailwind, map the CSS variables above into `tailwind.config` so utility classes stay in sync with the design tokens (avoids hardcoded hex drift):
+If your team uses Tailwind, put the CSS variables above into `tailwind.config`.
+Thus the utility classes stay in agreement with the design tokens, and no
+person writes a hex value directly.
 
 ```js
 // tailwind.config.js
@@ -472,12 +639,24 @@ module.exports = {
 
 ---
 
-## 6. Migration Notes (from current prototype)
+## 6. Notes for the change from the current prototype
 
-The Phase-0 prototype (`src/style.css`) already establishes the right instincts — dark base, translucent panels, tabular numerics for the clock/KPIs, a minimal glance strip. This spec extends it rather than replacing its intent:
+The Phase 0 prototype (`src/style.css`) already has the correct instincts. It
+has a dark base, translucent panels, tabular numbers for the clock and the
+KPIs, and a small KPI strip. This document continues that work. It does not
+replace its intention.
 
-- `--panel` → split into `--surface-panel` (translucent) and `--surface-panel-solid` (fallback); add `backdrop-filter` blur, which the prototype currently omits.
-- `--accent: #4fc3f7` → retained as `--accent-blue` (secondary/informational accent); a new `--accent-primary` (`#ff3d8a`, pink/magenta) is introduced for primary actions and active-mode indication, per the target visual direction.
-- `--amber: #ffb74d` → retained as `--color-warning`.
-- The ad-hoc `LINE_COLORS` array in `src/simulation.ts` should be replaced with the 16-color `--line-color-*` palette in §2.4, extended with the mode-default/stroke-pattern mapping so future modes (bus, ferry, etc. per GDD §3.3) are visually distinguishable beyond hue alone.
-- `#focus-panel`'s existing position/sizing (`top/right: 12px`, `260px` wide) matches the §3.3 spacing convention already — keep it, just apply the new `.panel` glass treatment and type tokens.
+- Divide `--panel` into `--surface-panel`, which is translucent, and
+  `--surface-panel-solid`, which is the fallback. Add the `backdrop-filter`
+  blur. The prototype does not have that blur.
+- Keep `--accent: #4fc3f7` as `--accent-blue`. This is the secondary accent for
+  data. Add a new `--accent-primary` (`#ff3d8a`, pink or magenta) for the
+  primary actions and for the active mode. This agrees with the target design.
+- Keep `--amber: #ffb74d` as `--color-warning`.
+- Replace the `LINE_COLORS` array in `src/simulation.ts` with the 16 colours of
+  `--line-color-*` in §2.4. Then add the default colour and the stroke pattern
+  for each mode. Thus a future mode, such as a bus or a ferry, is different in
+  more than its colour. See GDD §3.3.
+- The position and the size of `#focus-panel` already agree with §3.3. They are
+  `top/right: 12px` and a width of `260px`. Keep them. Apply the new `.panel`
+  glass style and the new type tokens only.

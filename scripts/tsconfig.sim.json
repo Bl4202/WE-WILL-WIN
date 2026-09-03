@@ -1,0 +1,9 @@
+{
+  "//": "check-sim.mts is the one script that imports the game kernel from src/, and src/ is compiled by Vite with bundler resolution and vite/client types. The NodeNext settings in tsconfig.json cannot type-check those files (extensionless imports, import.meta.env), so the harness gets the root project's module settings plus Node's globals.",
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": ["vite/client", "node"],
+    "allowImportingTsExtensions": true
+  },
+  "include": ["check-sim.mts", "../src"]
+}

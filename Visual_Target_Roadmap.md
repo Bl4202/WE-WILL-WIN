@@ -1,232 +1,278 @@
 # Visual Target Roadmap
 
-A reference screenshot (provided 2026-08-22) sets the visual/UX bar for where this game is
-headed. This is a **feature checklist extracted from that image**, not a phase plan —
-most of these land well past Phase 1 (current), several overlap with Phase 3/4 items
-already in `Transit_Authority_GDD.md` (noted inline where relevant). Treat this as the
-"what does done look like" reference to check future work against.
+*This document uses ASD-STE100 Simplified Technical English.*
 
-The reference is a 3D, night-mode transit map (a real-world NYC-Brooklyn example: Flatbush
-Av / Tillary St / Jay St / Fulton Mall) with a station inspector panel, live departures, an
-economy readout, and a full control chrome. Broken into groups below, at the finest detail
-level I can read off the image.
+A reference screenshot of 2026-08-22 sets the visual target for this game. This
+document is a checklist of the features in that image. It is not a plan of the
+phases. Most of these features come after Phase 1, which is the current phase.
+Some of them agree with items in Phase 3 and Phase 4 of
+`Transit_Authority_GDD.md`. The notes below show where they agree. Use this
+document to examine future work.
 
----
-
-## 1. Map rendering — 3D city + day/night
-
-- [ ] **3D building extrusion** — city blocks rendered as extruded 3D blocks (height from
-      building-footprint data), not flat 2D fill. This is the single biggest visual jump
-      from the current renderer. Buildings are a flat dark gray, undifferentiated by type —
-      no per-building color/material variation visible.
-- [ ] **2D/3D toggle** — a button (bottom-right in the reference, labeled "2D") that
-      switches camera between the current flat top-down view and a tilted 3D perspective.
-      Its presence confirms the screenshot itself is the *3D* mode.
-- [ ] **Day/night lighting cycle** — the basemap's lighting (sky, building shading, ambient
-      tone) shifts with the in-sim clock, not just a fixed dark theme. The reference is
-      captured at 23:17 sim-time and reads as genuine nighttime — dark navy sky, no visible
-      sun/moon glow, buildings read as silhouettes rather than lit surfaces.
-- [ ] **Water / green-space fill** — a large navy-blue area (upper portion of frame, reads
-      as a bay or river) and smaller teal polygons nearer the map center. *Uncertain: the
-      smaller teal shapes could be water (ponds/basin) or parks — the color alone doesn't
-      disambiguate at this resolution. Worth deciding as a deliberate two-tone convention
-      (water vs. green space) rather than guessing at implementation time.*
-- [ ] **Road network rendered under the 3D buildings** — visible thin gray/tan lines
-      forming a full street grid, plus at least one highway interchange with curved
-      cloverleaf-style ramps (upper-middle of frame). This implies the basemap carries full
-      road detail, not just arterials — consistent with the OSM street graph already baked
-      in Phase 1, just not rendered as flat 2D lines the way it is today.
-- [ ] **Tilted/perspective camera controls** — pitch + rotate, not just pan/zoom (current
-      renderer explicitly disables rotation — this will need revisiting).
-- [ ] **Rounded-corner UI chrome** — every panel, button, and chip in this reference uses
-      soft rounded corners. *Flag: this is the opposite direction from the current
-      implemented UI, which was deliberately moved to hard square edges per an earlier
-      request. Reconcile which direction wins before restyling toward this reference —
-      don't silently round every corner back off without a decision.*
-
-## 2. Line, station & vehicle rendering
-
-- [ ] **Lines rendered with real thickness/tube appearance**, not flat 2px paths — reads
-      almost as a raised ribbon following the street grid, with a subtle drop-shadow/glow
-      beneath it suggesting the line sits slightly elevated above the ground plane rather
-      than painted flat onto it.
-- [ ] **Parallel-track offset on shared corridors** — where two or more lines run the same
-      trunk alignment, render them as visually distinct parallel strands rather than one
-      overlapping line (visible in the reference along the main corridor, where red/green/
-      orange run side by side for a long stretch).
-- [ ] **Line colors read as real-world-accurate** for this NYC example — red badges for
-      1/2/3-family lines, green for 4/5/6-family, orange for B/D/F/M-family — matching the
-      actual MTA color convention. *Not directly portable to Houston (no equivalent
-      real-world palette to match), but worth deciding whether player-drawn lines should
-      default to a similarly saturated, high-contrast palette rather than the current
-      pastel/desaturated set.*
-- [ ] **Station markers**: small white circle + name label + a row of colored line-badge
-      pills showing every line serving that stop (e.g. "5 2" badges next to "Flatbush Av").
-      Badges are small filled circles with a bold white digit/letter, matching the same
-      style used inside the side panel.
-- [ ] **Selected-station highlight state** — the currently-inspected station ("Flatbush Av")
-      reads visually distinct from other stations on the map: brighter/larger label text
-      and a more prominent marker versus the dimmer, smaller labels on stations not
-      currently selected (Tillary St, Jay St, Fulton Mall are all visible but clearly
-      de-emphasized by comparison).
-- [ ] **Station "platform" overlay square** — a semi-transparent light-blue rectangular
-      plane at station locations, distinct from the simple dot used elsewhere.
-      **Correction from the first pass of this doc:** this should apply to **every**
-      station, not just visually "busier" ones — the earlier draft's "rises from busier
-      stations" framing was a misread. Treat this square as the default visual
-      representation of a station's physical footprint, present everywhere.
-      **This is the visual hook for an eventual station-design editing feature** — the
-      square is presumably a stand-in/placeholder for whatever the player will eventually
-      be able to configure (platform length/width, entrance placement, elevated vs.
-      underground form, etc.). Don't build it as a cosmetic-only overlay; design it from
-      the start as the thing a future station editor edits.
-- [ ] **Trains rendered as a consist of linked white squares** — confirmed visible in the
-      bottom-right area of the reference, on the track there: a train is **not** a single
-      dot/circle (unlike our current game's large colored circles) but a short row of
-      individual white square segments joined end-to-end along the line, each square
-      reading as one car. This is the target train design going forward.
-  - **Car count = visible train length.** The segmented-squares approach visually encodes
-    how many cars a train is running with, which implies rolling-stock/consist-length
-    needs to become a real, inspectable property rather than the single flat
-    `TRAIN_CAPACITY` constant the sim currently uses (`src/constants.ts`) — a 2-car train
-    and an 8-car train should look different, not just carry different numbers.
-  - Squares are white (matching the white station-dot color), **not** colored to match
-    the line the way our current vehicle markers are — color/identity is carried by the
-    line itself and the line's badges, not repeated on the train.
-  - Orientation/rotation of each square should presumably follow the line's local
-    heading (cars lie flat along the track direction), rather than a rotation-invariant
-    circle — worth confirming against a closer crop, since square markers (unlike
-    circles) actually need a heading to render correctly.
-
-## 3. Station Details panel (click a station → slide-out)
-
-This is the biggest net-new *feature*, not just a visual — it's a real data panel. Full
-layout, top to bottom:
-
-- [ ] **Header row**: back arrow (‹) at far left, "Station Details" title centered, close
-      (×) button at far right.
-- [ ] **Name field row**: an editable text input pre-filled with the station's name
-      ("Flatbush Av"), plus a separate small square button with a circular-arrows/refresh
-      icon immediately to its right — reads as "regenerate/randomize this station's name,"
-      implying stations have an auto-name-generation feature in addition to manual rename.
-- [ ] **Line badge row**: directly under the name field, one circular badge per line
-      serving this station (red "2", green "5") — same badge style used on the map itself.
-- [ ] **"Ridership" section**, header in bold:
-  - One row per line: small colored line badge on the left, a horizontal bar (bar *length*
-    scales with the value — green "5" bar is visibly longer than red "2" bar, matching
-    12,171 vs 9,108), and the number right-aligned.
-  - A final **"Total"** row: no badge, no bar, just label left / summed value right
-    (21,279 = 12,171 + 9,108 exactly — confirms Total is a plain sum, not a deduplicated
-    unique-rider count).
-- [ ] **"Departures" section**, header in bold, grouped by line:
-  - Sub-header per line: colored circular badge + "{N} Train" label (e.g. "2 Train").
-  - Under each: one row per direction/terminus this line serves from here, showing the
-    **destination name** on the left and, right-aligned, two numbers separated by a comma
-    then "min" (e.g. "Prospect Pk — 1, 6 min", "125 St — 2, 6 min"). *Uncertain what the
-    first number means* — candidates: a platform/track number, a queue position ("1st
-    train, then a 2nd"), or a train ID. Don't guess when implementing; decide the intended
-    semantics deliberately, since the current game has no concept of platform/track number
-    at all.
-  - The 2 Train section shows two directions (Prospect Pk, 125 St); the 5 Train section
-    also shows two (121 St, Eastern Pkwy) — i.e. every line at a station lists both of its
-    directions, not just "next train regardless of direction."
-- [ ] **"Current Usage" section**, header in bold, single line of body text below it:
-  - Populated state would presumably show a live passenger count; the captured state shows
-    the **empty state**: "No passengers at station" in a dimmer/muted text color.
-- [ ] **"Nearby Stations" section**, header in bold, up to 3 rows visible:
-  - Each row: a location-pin icon on the left; station name in bold on the first line;
-    directly below it, smaller muted text combining **distance in meters** and **walk time**
-    with a middle-dot separator ("268m • 4 min walk"); and on the right side of the row,
-    that station's own line badges (Tillary St: F + 6; Jay St: 1 + F + 6; Fulton Mall: 3
-    alone).
-  - These are explicitly *not* on the selected station's own lines — this is a walk-transfer
-    suggestion list, separate from same-line connections.
-  - Rows appear sorted by distance ascending (268m, 441m, 500m).
-- [ ] **Panel chrome**: the whole panel sits over a translucent dark scrim/backdrop, rounded
-      corners throughout, positioned flush to the left edge of the screen, roughly a third
-      of the viewport width.
-
-## 4. Top-right icon row
-
-- [ ] Map style / layers toggle icon (folded-map glyph)
-- [ ] Sound on/off icon (speaker with sound-wave arcs — implies the game has ambient audio
-      or SFX that can be muted)
-- [ ] Dark/light **theme** toggle icon (crescent moon) — distinct from the day/night *sim*
-      lighting cycle in §1; this one is a UI chrome theme switch, not a simulation state.
-- [ ] Hamburger menu (three horizontal lines → settings/overflow menu, contents unknown
-      from this image)
-- [ ] All four sit in a single translucent rounded pill/row, top-right corner, consistent
-      icon sizing and spacing.
-
-## 5. Bottom time & economy bar
-
-Reading left to right as laid out in the image:
-
-- [ ] Play/pause button (▶), leftmost.
-- [ ] **Day counter** ("Day 48") and **live clock** ("23:17:02", to the second) — the
-      current game already has an equivalent (day + HH:MM), just coarser (minutes, not
-      seconds) and differently positioned.
-- [ ] **Moon icon** immediately after the clock, tied to time-of-day (pairs with the
-      day/night lighting cycle in §1 — this is the glanceable "it's currently night"
-      indicator, separate from the theme-toggle moon icon in §4).
-- [ ] **Multi-step fast-forward controls** — two/three step icons after the moon (already
-      exists in the current game as the speed buttons; here it's a restyle, not new
-      function).
-- [ ] **Money/budget chip**, visually separated from the time cluster: a small icon (reads
-      as a card/chip or bank-note glyph) followed by the balance ("$1,055,959,939") and a
-      **live positive delta** in green ("+$4.85M") — this is a real running capital account
-      shown continuously, not a one-time cost estimate. Already a named future item: GDD
-      Phase 3 "Capital account v1" and Phase 4 "Operating account." Not implementable until
-      that economy model exists.
-- [ ] **Total active vehicle count** chip: a small train/vehicle icon + a bare number
-      ("123") — reads as "123 trains currently in service network-wide." Cheap to add now:
-      it's just `vehicles.length` surfaced in a chrome slot, no new simulation needed.
-- [ ] Each cluster (time, money, vehicle-count) is its own separate rounded pill rather than
-      one continuous bar — worth preserving that visual separation rather than merging them
-      into one strip.
-
-## 6. Bottom-left tool icons
-
-Four square icon buttons in a row, bottom-left corner:
-
-- [ ] **Wrench icon** — build/tools mode (line drawing mode already exists conceptually as
-      the current game's Build mode).
-- [ ] **Branch/fork icon** (two lines splitting from a point, with dots at the ends) —
-      reads as a route- or line-planning view; exact function unconfirmed from the icon
-      alone.
-- [ ] **Stacked-bars/list icon** — likely a lines/stations list overview panel (a
-      network-wide summary, as distinct from the single-station Details panel in §3).
-- [ ] **Share/export icon** (curved arrow) — export or share the current network. New
-      feature, no backing today; note it implies some kind of shareable network state
-      (a save format, a link, or an image export — undetermined which from the icon).
-
-## 7. Right-side floating map controls
-
-Vertical stack, bottom-right corner, each a separate rounded-square button:
-
-- [ ] **Compass / reset-bearing button** (top of the stack) — only meaningful once map
-      rotation is enabled (see §1); resets the camera to north-up.
-- [ ] **"2D" toggle button** (see §1, listed here too since it's physically in this
-      cluster, directly below the compass).
-- [ ] **Zoom + button**, then **zoom − button** below it — native map zoom controls,
-      currently the game relies on scroll-to-zoom only with no on-screen buttons.
+The reference image shows a 3D transit map at night. The city is New York, in
+Brooklyn: Flatbush Av, Tillary St, Jay St, and Fulton Mall. The image contains
+a station panel, live departures, an economy display, and the full control
+chrome. The groups below give all the detail that is visible in the image.
 
 ---
 
-## Sequencing note
+## 1. Map rendering — the 3D city and the day/night cycle
 
-Most of §1 (3D rendering, day/night) and the economy readout in §5 are **not** buildable
-until later GDD phases land underneath them — 3D rendering wants real geometry/LOD work
-(Phase 5 "Large-metro LOD, 3D station inspector" is the named slot for this), and the
-money readout needs the capital-account economy from Phase 3/4. The **Station Details
-panel (§3)** and the **chrome restyle items (§4, §6, §7)** are the parts of this image
-that could realistically be pulled forward and prototyped against the *current* Phase 1
-game without waiting on the simulation kernel to grow up — they're mostly new UI wrapping
-data (ridership, departures, nearby stations) that's cheap-to-free to compute on top of
-what `simulation.ts` already tracks.
+- [ ] **3D building extrusion.** The city blocks are 3D blocks with a height.
+      The height comes from the data of the building footprint. They are not
+      flat 2D areas. This is the largest visual change from the current
+      renderer. The buildings are one dark grey. There is no colour or
+      material that changes with the type of building.
+- [ ] **A control to change between 2D and 3D.** In the reference this control
+      is at the bottom right, and its label is "2D". It changes the camera
+      between the current flat view from above and a 3D view at an angle. This
+      control shows that the screenshot is the *3D* mode.
+- [ ] **A day/night light cycle.** The light of the basemap changes with the
+      clock of the simulation. It is not a fixed dark theme. The sky, the
+      shade on the buildings, and the ambient tone all change. The reference
+      shows 23:17 in the simulation, and it looks like true night. The sky is
+      dark blue, there is no light from the sun or the moon, and the buildings
+      are dark shapes, not lit surfaces.
+- [ ] **Water areas and green areas.** There is a large dark blue area at the
+      top of the image. It looks like a bay or a river. There are smaller teal
+      areas near the centre of the map. *Not sure: the smaller teal areas can
+      be water, such as a pond or a basin, or they can be parks. The colour
+      alone does not give the answer at this resolution. Make a decision about
+      a two-colour rule for water and green space. Do not decide this at the
+      time of the implementation.*
+- [ ] **A road network below the 3D buildings.** The image shows thin grey and
+      tan lines that make a full street grid. There is also a highway
+      interchange with curved ramps at the top centre. Thus the basemap holds
+      all the road detail, not only the large roads. The OSM street graph of
+      Phase 1 already has this data. But the game now draws it as flat 2D
+      lines.
+- [ ] **Camera controls for pitch and rotation.** The camera must do more than
+      pan and zoom. The current renderer stops the rotation, and this must
+      change.
+- [ ] **Round corners on the chrome.** Each panel, button, and chip in the
+      reference has soft round corners. *Warning: this is the opposite of the
+      current interface. An earlier request changed the interface to hard
+      square corners. Make a decision about which style is correct before you
+      change the style to this reference. Do not make the corners round again
+      without a decision.*
 
-Two open decisions flagged inline above, worth resolving before implementation rather than
-guessing in the moment: **(a)** rounded vs. square UI chrome — this reference is fully
-rounded, the currently-implemented UI is deliberately square-edged; **(b)** what the two
-comma-separated numbers in each Departures row actually mean, since the current simulation
-has no concept of platform/track number to hang the first one on.
+## 2. Rendering of the lines, the stations, and the vehicles
+
+- [ ] **The lines have a real thickness.** They are not flat paths of 2 px.
+      A line looks almost like a raised ribbon that follows the street grid.
+      There is a light shadow below it. Thus the line looks a little above the
+      ground, not painted flat on it.
+- [ ] **Parallel tracks in a shared corridor.** Two or more lines can use the
+      same corridor. Draw them as separate parallel strands. Do not draw them
+      as one line. The reference shows this along the main corridor. There the
+      red line, the green line, and the orange line are adjacent for a long
+      distance.
+- [ ] **The line colours agree with the real world** in this New York example.
+      A red badge is for the 1, 2, and 3 lines. A green badge is for the 4, 5,
+      and 6 lines. An orange badge is for the B, D, F, and M lines. These are
+      the real MTA colours. *Houston has no equivalent real palette. But make
+      a decision about the default colours of the lines that the player draws.
+      A strong palette with a high contrast can be better than the current
+      light palette.*
+- [ ] **Station markers.** A marker has a small white circle, a name label,
+      and a row of coloured badges. There is one badge for each line at that
+      stop. An example is the badges "5" and "2" adjacent to "Flatbush Av". A
+      badge is a small filled circle with a bold white letter or digit. The
+      panel uses the same badge style.
+- [ ] **A highlight for the selected station.** The station in the panel is
+      "Flatbush Av". It looks different from the other stations on the map.
+      Its label text is brighter and larger, and its marker is stronger. The
+      labels of Tillary St, Jay St, and Fulton Mall are visible but clearly
+      weaker.
+- [ ] **A square overlay for the platform.** There is a translucent light-blue
+      rectangle at each station. It is different from the simple dot at other
+      positions.
+      **A correction to the first version of this document:** this rectangle
+      applies to **each** station, not only to the stations with many
+      passengers. The earlier text said that the rectangle "rises from busier
+      stations". That was an incorrect reading. This rectangle is the default
+      view of the physical footprint of a station, and it is present at each
+      station.
+      **This rectangle is the visual start of a future feature to edit the
+      design of a station.** The rectangle is a substitute for the parts that
+      the player will configure later. These parts are the length and the
+      width of the platform, the position of the entrance, and the form of the
+      station. The form is elevated or below the ground. Do not build the
+      rectangle as decoration only. Design it as the object that a future
+      station editor changes.
+- [ ] **A train is a row of connected white squares.** This is visible in the
+      bottom right of the reference, on the track. A train is **not** one dot
+      or one circle. The current game uses large coloured circles. A train is
+      a short row of separate white squares, connected end to end along the
+      line. Each square is one car. This is the target design for a train.
+  - **The number of cars is the length of the train on the screen.** The row
+    of squares shows the number of cars in the train. Thus the length of the
+    train must become a real property that the player can examine. Now the
+    simulation uses one constant, `TRAIN_CAPACITY`, in `src/constants.ts`. A
+    train with 2 cars and a train with 8 cars must look different. A different
+    number alone is not sufficient.
+  - The squares are white. This is the same colour as the station dot. They
+    are **not** the colour of the line. The current vehicle markers use the
+    colour of the line. The line itself and its badges carry the identity. The
+    train does not repeat it.
+  - Each square must turn to the local direction of the line. Thus the cars
+    lie flat along the track. A circle does not need a direction, but a square
+    does. Examine a closer part of the image to confirm this.
+
+## 3. The station panel (click a station to open it)
+
+This is the largest new *feature* in the image. It is not only a visual change.
+It is a real data panel. The full layout, from the top to the bottom, is this:
+
+- [ ] **The header row.** There is a back arrow at the far left, the title
+      "Station Details" at the centre, and a close button at the far right.
+- [ ] **The name row.** There is a text field with the name of the station in
+      it, for example "Flatbush Av". The player can change this text. There is
+      a small square button at the right of the field. Its icon is two
+      circular arrows. This button makes a new name for the station. Thus the
+      game can also make station names automatically.
+- [ ] **The badge row.** This row is below the name field. There is one round
+      badge for each line at this station. In the image these are a red "2"
+      and a green "5". The map uses the same badge style.
+- [ ] **The "Ridership" section**, with a bold header:
+  - There is one row for each line. The row has a small coloured badge at the
+    left, a horizontal bar, and a number at the right. The *length* of the bar
+    changes with the value. The green "5" bar is clearly longer than the red
+    "2" bar, because the values are 12,171 and 9,108.
+  - The last row is the **"Total"** row. It has no badge and no bar. It has
+    the label at the left and the sum at the right. The sum is 21,279, which
+    is exactly 12,171 + 9,108. Thus the total is a simple sum. It is not a
+    count of unique passengers.
+- [ ] **The "Departures" section**, with a bold header. The rows are in groups,
+      one group for each line:
+  - Each group has a header with a round coloured badge and a label, for
+    example "2 Train".
+  - Below the header there is one row for each direction. The row shows the
+    **name of the destination** at the left. At the right it shows two numbers
+    with a comma between them and then "min". Examples are "Prospect Pk — 1,
+    6 min" and "125 St — 2, 6 min". *The first number is not clear.* It can be
+    a platform number, a track number, a position in a queue, or an
+    identification number of a train. Do not guess at the time of the
+    implementation. Make a decision about the correct meaning. The current
+    game has no platform number and no track number.
+  - The "2 Train" group shows two directions: Prospect Pk and 125 St. The "5
+    Train" group also shows two: 121 St and Eastern Pkwy. Thus each line at a
+    station shows both of its directions. It does not show only the next train.
+- [ ] **The "Current Usage" section**, with a bold header and one line of text
+      below it:
+  - A full state shows a live count of the passengers. The image shows the
+    **empty state**: "No passengers at station", in a weaker text colour.
+- [ ] **The "Nearby Stations" section**, with a bold header. Three rows are
+      visible:
+  - Each row has a pin icon at the left. The name of the station is on the
+    first line, in bold. Below the name there is smaller, weaker text. This
+    text gives the **distance in metres** and the **walk time**, with a dot
+    between them, for example "268m • 4 min walk". At the right of the row are
+    the badges of the lines at that station. Tillary St has F and 6. Jay St
+    has 1, F, and 6. Fulton Mall has 3 only.
+  - These stations are *not* on the lines of the selected station. This is a
+    list of transfers on foot. It is separate from the connections on the same
+    line.
+  - The rows are in order of increasing distance: 268 m, 441 m, and 500 m.
+- [ ] **The chrome of the panel.** The panel is above a translucent dark
+      background. All its corners are round. It is at the left edge of the
+      screen. Its width is approximately one third of the viewport.
+
+## 4. The icon row at the top right
+
+- [ ] An icon for the map style and the layers. The icon is a folded map.
+- [ ] An icon for the sound. The icon is a speaker with sound arcs. Thus the
+      game has ambient sound or effects, and the player can stop them.
+- [ ] An icon for the **theme**, dark or light. The icon is a crescent moon.
+      This is different from the day/night light of the simulation in §1. This
+      icon changes the theme of the interface. It does not change the state of
+      the simulation.
+- [ ] A menu icon with three horizontal lines. It opens a settings menu. The
+      image does not show the contents of this menu.
+- [ ] The four icons are in one translucent round row at the top right corner.
+      The size and the space of the icons are the same.
+
+## 5. The time bar and the economy bar at the bottom
+
+The order below is from the left to the right, as it is in the image.
+
+- [ ] A play/pause button at the far left.
+- [ ] **A day counter** ("Day 48") and a **live clock** ("23:17:02", with the
+      seconds). The current game has an equivalent, with the day and the hours
+      and minutes. But the current game does not show the seconds, and its
+      position is different.
+- [ ] **A moon icon** immediately after the clock. It shows the time of day.
+      It agrees with the day/night light cycle in §1. This icon shows that it
+      is night. It is different from the theme icon in §4.
+- [ ] **Controls to make the time fast**, with two or three steps. These are
+      after the moon icon. The current game has speed buttons. This is a
+      change of the style only, not a new function.
+- [ ] **A money chip**, separate from the time group. It has a small icon that
+      looks like a card or a bank note. After the icon is the balance
+      ("$1,055,959,939") and a live green value ("+$4.85M"). Thus this is a
+      real capital account that the game shows continuously. It is not a
+      single cost estimate. The GDD has this item: "Capital account v1" in
+      Phase 3 and "Operating account" in Phase 4. This chip is not possible
+      until that economy model exists.
+- [ ] **A chip with the count of the active vehicles.** It has a small train
+      icon and a number ("123"). Thus 123 trains are in service in the full
+      network. This is cheap to add now. It is only `vehicles.length` in a
+      chrome position. It needs no new simulation.
+- [ ] Each group is its own round chip. The three groups are the time, the
+      money, and the vehicle count. Keep this separation. Do not put them
+      together in one strip.
+
+## 6. The tool icons at the bottom left
+
+There are four square icon buttons in a row at the bottom left corner.
+
+- [ ] **A wrench icon** for the build mode and the tools. The current game has
+      a build mode for the lines.
+- [ ] **A branch icon**, which is two lines that separate from a point, with a
+      dot at each end. It looks like a view to plan a route or a line. The
+      icon alone does not give the exact function.
+- [ ] **A bar icon**, which looks like a list. It is probably a list of the
+      lines and the stations. This is a summary of the full network. It is
+      different from the single-station panel in §3.
+- [ ] **A share icon**, which is a curved arrow. It exports or shares the
+      current network. This is a new feature with no support today. Thus the
+      game needs a state that a player can share. This can be a save format, a
+      link, or an image. The icon does not show which one.
+
+## 7. The map controls at the right
+
+These are in a vertical group at the bottom right corner. Each one is a
+separate round square button.
+
+- [ ] **A compass button** at the top of the group. It sets the camera to
+      north. It has a use only after the map rotation is available. See §1.
+- [ ] **The "2D" button.** See §1. It is in this group, immediately below the
+      compass.
+- [ ] **A zoom-in button and then a zoom-out button** below it. These are the
+      usual map zoom controls. Now the game has no zoom buttons on the screen.
+      The player must use the scroll wheel.
+
+---
+
+## Note about the order of the work
+
+Most of §1 and the economy display in §5 are not possible until later GDD
+phases are complete. The 3D rendering needs work on the geometry and the level
+of detail. Phase 5 contains this work: "Large-metro LOD, 3D station inspector".
+The money display needs the capital account from Phase 3 and Phase 4.
+
+Two parts of this image are possible now, on the *current* Phase 1 game. They
+do not need a larger simulation kernel. These parts are the **station panel
+(§3)** and the **chrome changes (§4, §6, §7)**. They are mostly new interface
+elements around data that `simulation.ts` already holds. That data is the
+ridership, the departures, and the nearby stations. It is cheap to calculate.
+
+Two decisions are open. Make them before the implementation. Do not guess at
+the time of the work.
+
+- **(a)** Round corners or square corners. This reference has round corners
+  only. The current interface has square corners, and this was a deliberate
+  decision.
+- **(b)** The meaning of the two numbers in each row of the Departures
+  section. The current simulation has no platform number and no track number
+  for the first number.

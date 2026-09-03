@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "bake": "node --max-old-space-size=8192 --import tsx scripts/bake.mts",
     "check:gtfs": "tsx scripts/check-gtfs.mts",
-    "typecheck:scripts": "tsc -p scripts/tsconfig.json"
+    "typecheck:scripts": "tsc -p scripts/tsconfig.json",
+    "check:sim": "tsx scripts/check-sim.mts",
+    "typecheck:sim": "tsc -p scripts/tsconfig.sim.json"
   },
   "dependencies": {
     "@deck.gl/core": "^9.1.0",

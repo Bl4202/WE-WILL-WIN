@@ -71,6 +71,21 @@ export const DAILY_TRIPS = 40000;
 export const DEST_DETERRENCE_M = 10000;
 
 /**
+ * Maximum entries in the origin/destination plan cache.
+ *
+ * The cache is only invalidated by a network change, so on a session where
+ * the player stops building it is otherwise unbounded: the key space is
+ * zones², about 2.4M pairs for Houston's 1,560 tracts, and destination
+ * choice spreads widely enough to keep finding new ones. Measured climbing
+ * past 23,000 entries in 200k ticks with no network edits and still rising.
+ *
+ * 20,000 is comfortably above the working set — zone pairs repeat heavily,
+ * which is the whole reason the cache pays — so eviction should be rare in
+ * practice and only bites the long tail.
+ */
+export const PLAN_CACHE_LIMIT = 20000;
+
+/**
  * TEMPORARY demand-bootstrap hack, Phase 0 only. Fraction of spawnTrip()
  * calls that draw BOTH origin and destination from zones already near the
  * player's built stations, instead of the full metro-wide gravity pool — a
