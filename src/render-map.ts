@@ -108,14 +108,29 @@ function rampColor(t: number): RGBA {
   ];
 }
 
+/**
+ * Parsed channel triples, keyed by the hex string.
+ *
+ * Callers get a fresh array (several of them set the alpha afterwards), but
+ * the string slicing and three parseInt calls happen once per distinct
+ * colour for the life of the page. The palettes are fixed and small — ten
+ * line colours and a handful of facility ones — while this runs per vehicle
+ * per frame, so the map never grows and the parse never repeats.
+ */
+const HEX_CHANNEL_CACHE = new Map<string, [number, number, number]>();
+
 function hexToRgb(hex: string): RGBA {
-  const h = hex.replace("#", "");
-  return [
-    parseInt(h.slice(0, 2), 16),
-    parseInt(h.slice(2, 4), 16),
-    parseInt(h.slice(4, 6), 16),
-    255,
-  ];
+  let channels = HEX_CHANNEL_CACHE.get(hex);
+  if (!channels) {
+    const h = hex.replace("#", "");
+    channels = [
+      parseInt(h.slice(0, 2), 16),
+      parseInt(h.slice(2, 4), 16),
+      parseInt(h.slice(4, 6), 16),
+    ];
+    HEX_CHANNEL_CACHE.set(hex, channels);
+  }
+  return [channels[0], channels[1], channels[2], 255];
 }
 
 function compactMoney(value: number): string {
@@ -166,6 +181,8 @@ interface VehicleModel {
   polygon: [number, number, number][];
   position: [number, number, number];
   color: RGBA;
+  /** Marker radius in metres, by line mode. */
+  radiusM: number;
 }
 
 interface DemolitionSite {
@@ -489,6 +506,9 @@ export class MapRenderer {
    *  be composited between them (see update). */
   private cachedNetwork: { track: Layer[]; stations: Layer[] } | null = null;
   private cachedNetworkKey = "";
+  /** networkVersion the parallel-edge answer below was computed for. */
+  private zoomKeyVersion = -1;
+  private zoomKeyNeeded = false;
   private cachedMobility: Layer[] | null = null;
   private cachedMobilityKey = "";
   private roadModels: RoadModel[] = [];
@@ -1887,6 +1907,37 @@ export class MapRenderer {
     });
   }
 
+  /**
+   * Whether any edge in the network carries more than one line.
+   *
+   * Only those edges get a zoom-dependent side-by-side offset, so this is
+   * what decides whether the track cache has to be invalidated by zoom at
+   * all. Recomputed only when the network changes, and it counts station
+   * pairs rather than building geometry — cheap next to the rebuild it
+   * usually avoids.
+   */
+  private networkNeedsZoomKey(snap: SimSnapshot): boolean {
+    if (this.zoomKeyVersion === snap.networkVersion) return this.zoomKeyNeeded;
+    this.zoomKeyVersion = snap.networkVersion;
+    this.zoomKeyNeeded = false;
+
+    const seen = new Set<string>();
+    for (const line of snap.lines.values()) {
+      for (let i = 1; i < line.stationIds.length; i++) {
+        const a = line.stationIds[i - 1];
+        const b = line.stationIds[i];
+        if (a === b) continue;
+        const edge = a < b ? `${a}|${b}` : `${b}|${a}`;
+        if (seen.has(edge)) {
+          this.zoomKeyNeeded = true;
+          return true;
+        }
+        seen.add(edge);
+      }
+    }
+    return false;
+  }
+
   /** New PathLayer every call — see getDemandLayer for why the *instance*
    *  must not be cached across a toggle off/on. */
   private getGhostLayer(): PathLayer {
@@ -1910,11 +1961,24 @@ export class MapRenderer {
     snap: SimSnapshot,
     game: Game,
   ): { track: Layer[]; stations: Layer[] } {
-    // Bucketed rather than exact: parallel-track offsets need to stay in
-    // step with zoom (see buildTrackSegments), but rebuilding on every
-    // sub-pixel zoom tick would be wasted work.
-    const zoomBucket = Math.round(this.map.getZoom() * 10);
-    const key = `${snap.networkVersion}|${game.selection?.kind ?? ""}:${game.selection?.id ?? ""}|${zoomBucket}|${this.threeDimensional}|${this.theme}`;
+    // Zoom only enters the key when the network actually needs it.
+    //
+    // The single zoom-dependent quantity in buildTrackSegments is the
+    // parallel-track offset, and that is identically zero for an edge
+    // carried by one line — `(i - (n - 1) / 2)` with n = 1 and i = 0. So a
+    // network where no two lines share an edge, which is most of them,
+    // renders the same at every zoom. Keying on zoom regardless meant every
+    // 0.1 of zoom threw away the cache and rebuilt every track segment and
+    // station model, cloning every path vertex twice — on most frames of
+    // any continuous zoom, including the 850 ms easeTo when toggling 3D.
+    //
+    // Centre latitude belongs here for the same reason: metersPerPixel
+    // depends on it, so panning north or south changes the offsets. It was
+    // simply missing before.
+    const zoomKey = this.networkNeedsZoomKey(snap)
+      ? `${Math.round(this.map.getZoom() * 10)}:${Math.round(this.map.getCenter().lat * 4)}`
+      : "flat";
+    const key = `${snap.networkVersion}|${game.selection?.kind ?? ""}:${game.selection?.id ?? ""}|${zoomKey}|${this.threeDimensional}|${this.theme}`;
     if (key === this.cachedNetworkKey && this.cachedNetwork) {
       return this.cachedNetwork;
     }
@@ -2549,6 +2613,12 @@ export class MapRenderer {
         }),
         position: [centerLng, centerLat, z],
         color,
+        radiusM:
+          line.mode === "bus"
+            ? VEHICLE_RADIUS_M * 0.55
+            : line.mode === "regional-rail"
+              ? VEHICLE_RADIUS_M * 1.25
+              : VEHICLE_RADIUS_M,
       };
     });
 
@@ -2569,30 +2639,24 @@ export class MapRenderer {
         getElevation: 3.1,
         pickable: false,
       }),
-      new ScatterplotLayer({
+      new ScatterplotLayer<VehicleModel>({
       id: "vehicles",
-      // Fresh array each frame: `snap.vehicles` is the sim's own mutable
-      // array (mutated in place, never reassigned), and deck.gl diffs `data`
-      // by reference — without a new reference here it never notices
-      // vehicles moving (or existing at all past the first, empty frame).
-      data: assignedVehicles,
-      getPosition: (v) => {
-        const line = snap.lines.get(v.lineId)!;
-        const dist = v.prevDist + (v.dist - v.prevDist) * alpha;
-        return this.toLngLat(positionOnLine(snap, line, dist));
-      },
+      // Fed `models`, not the raw vehicle list, because every value this
+      // layer needs was already computed above. Reading them back off the
+      // model means the frame does one positionOnLine per vehicle instead
+      // of two, and no hex parsing or Map lookup in an accessor at all.
+      //
+      // Still a fresh array each frame, which is what deck.gl needs:
+      // `snap.vehicles` is the sim's own array, mutated in place and never
+      // reassigned, and deck.gl diffs `data` by reference — so handing it
+      // that array directly would leave the layer frozen on the first frame.
+      data: models,
+      getPosition: (model) => model.position,
       // Sized in metres, not screen pixels: a train is a thing on the ground,
       // so zooming out shrinks it along with the city instead of leaving a
       // constant-size dot that swallows the map at region scale. The clamps
       // keep it from vanishing when zoomed right out or ballooning up close.
-      getRadius: (vehicle) => {
-        const mode = snap.lines.get(vehicle.lineId)!.mode;
-        return mode === "bus"
-          ? VEHICLE_RADIUS_M * 0.55
-          : mode === "regional-rail"
-            ? VEHICLE_RADIUS_M * 1.25
-            : VEHICLE_RADIUS_M;
-      },
+      getRadius: (model) => model.radiusM,
       radiusUnits: "meters",
       // The floor is the intended cutoff: past roughly zoom 12 (region
       // scale) a train would shrink below its own 5.5px track and melt into
@@ -2602,7 +2666,7 @@ export class MapRenderer {
       // Zooming *in* keeps scaling; this ceiling is only a guard so the
       // marker stays a train-sized bead at street zoom instead of a blob.
       radiusMaxPixels: 13,
-      getFillColor: (v) => hexToRgb(snap.lines.get(v.lineId)!.color),
+      getFillColor: (model) => model.color,
       stroked: true,
       getLineColor: VEHICLE_RING,
       getLineWidth: 1,
