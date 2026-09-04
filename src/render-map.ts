@@ -33,6 +33,7 @@ import {
 } from "./mobility";
 import type { ThemeMode } from "./preferences";
 import type { LinePoint } from "./simulation";
+import { RoadGraph } from "./road-graph";
 import type { Ring, WorldBundle } from "./world";
 import type {
   Line,
@@ -118,6 +119,17 @@ function rampColor(t: number): RGBA {
  * per frame, so the map never grows and the parse never repeats.
  */
 const HEX_CHANNEL_CACHE = new Map<string, [number, number, number]>();
+
+/** Drop points a routed path repeats at joins between consecutive edges. */
+function dedupePath(points: Vec2[]): Vec2[] {
+  const out: Vec2[] = [];
+  for (const point of points) {
+    const last = out[out.length - 1];
+    if (last && Math.hypot(point.x - last.x, point.y - last.y) <= 0.5) continue;
+    out.push(point);
+  }
+  return out;
+}
 
 function hexToRgb(hex: string): RGBA {
   let channels = HEX_CHANNEL_CACHE.get(hex);
@@ -325,6 +337,24 @@ function roadWidthM(roadClass: string, isRamp: boolean): number {
   return 7;
 }
 
+/**
+ * Snap radius for placing a bus stop, in screen pixels and in metres.
+ *
+ * Kept in pixels because that is what the gesture is — the player is aiming
+ * at a road they can see, and a tolerance that ignored zoom would either
+ * refuse a click that visually landed on a street (zoomed out) or grab a
+ * street a block away (zoomed in). The clamps stop it degenerating at the
+ * extremes: at region zoom 28 px is kilometres, and at street zoom it is a
+ * couple of metres, which would make the tool feel broken in both directions.
+ *
+ * Only *which* road the click chooses depends on the camera. The path and its
+ * cost come from the baked graph, so a committed line prices the same at any
+ * zoom — which was the whole point of the rework.
+ */
+const BUS_SNAP_PX = 28;
+const BUS_SNAP_MIN_M = 45;
+const BUS_SNAP_MAX_M = 400;
+
 const ROAD_SOURCE_ID = "game-road-structures";
 const ROAD_LAYER_SHADOW = "game-road-shadow";
 const ROAD_LAYER_EDGE = "game-road-edge";
@@ -506,6 +536,15 @@ export class MapRenderer {
    *  be composited between them (see update). */
   private cachedNetwork: { track: Layer[]; stations: Layer[] } | null = null;
   private cachedNetworkKey = "";
+  /**
+   * The baked citywide street graph, once it has loaded.
+   *
+   * Null until the player first needs it — see ensureRoadGraph. Everything
+   * that touches it keeps a tile-graph fallback, so bus building works from
+   * the first click and simply gets better when this arrives.
+   */
+  private roadGraph: RoadGraph | null = null;
+  private roadGraphLoad: Promise<void> | null = null;
   /** networkVersion the parallel-edge answer below was computed for. */
   private zoomKeyVersion = -1;
   private zoomKeyNeeded = false;
@@ -600,6 +639,37 @@ export class MapRenderer {
       // setStyle really did drop are rebuilt above, and their data is
       // re-pushed by ensureRoadStructureLayers.
     });
+  }
+
+  /**
+   * Start loading the citywide street graph, if it is not already on its way.
+   *
+   * Called when the player switches to bus mode rather than at boot: the file
+   * is about 5.5 MB over the wire, and putting it on the boot path would cost
+   * every player who never builds a bus line. Idempotent, and failures are
+   * swallowed to a console warning — bus building keeps working off the tile
+   * graph, just limited to the loaded viewport as before.
+   */
+  ensureRoadGraph(): void {
+    if (this.roadGraph || this.roadGraphLoad) return;
+    this.roadGraphLoad = RoadGraph.load(
+      import.meta.env.BASE_URL,
+      this.world.projection,
+    )
+      .then((graph) => {
+        this.roadGraph = graph;
+      })
+      .catch((error) => {
+        console.warn(
+          "street graph unavailable; bus routing stays limited to loaded tiles",
+          error,
+        );
+      });
+  }
+
+  /** Whether the citywide graph has arrived. */
+  get hasRoadGraph(): boolean {
+    return this.roadGraph !== null;
   }
 
   /** Whether the map is currently using the pitched, real-height city view. */
@@ -1692,14 +1762,54 @@ export class MapRenderer {
     resolveRoadPath = false,
   ): BuildTarget {
     if (transitMode === "bus") {
+      const cursorWorld = this.toWorld(lngLat[1], lngLat[0]);
+
+      // The baked graph is the authority once it has arrived. It covers the
+      // whole metro rather than the loaded tiles, so a bus line can be drawn
+      // past the edge of the screen and costs the same at any zoom. Until it
+      // lands — it is fetched lazily on first entering bus mode — fall back
+      // to the tile graph so the tool still works rather than going dead.
+      const graph = this.roadGraph;
+      if (graph) {
+        const tolerance = Math.max(
+          BUS_SNAP_MIN_M,
+          Math.min(
+            BUS_SNAP_MAX_M,
+            BUS_SNAP_PX * metersPerPixel(lngLat[1], this.map.getZoom()),
+          ),
+        );
+        const target = graph.snap(cursorWorld, tolerance);
+        if (!target) {
+          return { pos: cursorWorld, snapped: false, valid: false };
+        }
+        if (draft.length === 0 || !resolveRoadPath) {
+          return { pos: target.pos, snapped: true, valid: true };
+        }
+        // The previous point is already on the network, so it only needs
+        // enough slack to absorb float noise.
+        const previous = draft[draft.length - 1];
+        const start = graph.snap(previous.pos, BUS_SNAP_MIN_M);
+        if (!start) {
+          return { pos: target.pos, snapped: true, valid: false };
+        }
+        const routed = graph.route(start.nodeIndex, target.nodeIndex);
+        if (!routed) {
+          return { pos: target.pos, snapped: true, valid: false };
+        }
+        const path = dedupePath([previous.pos, ...routed, target.pos]);
+        return {
+          pos: target.pos,
+          pathFromPrevious: path,
+          demolitionSitesFromPrevious: [],
+          snapped: true,
+          valid: path.length >= 2,
+        };
+      }
+
       if (this.roadModels.length === 0) this.refreshWorldGeometry();
       const roadTarget = this.nearestRoadSnap(screen, 28);
       if (!roadTarget) {
-        return {
-          pos: this.toWorld(lngLat[1], lngLat[0]),
-          snapped: false,
-          valid: false,
-        };
+        return { pos: cursorWorld, snapped: false, valid: false };
       }
       if (draft.length === 0) {
         return { pos: roadTarget.pos, snapped: true, valid: true };
@@ -1720,14 +1830,7 @@ export class MapRenderer {
       if (!routed) {
         return { pos: roadTarget.pos, snapped: true, valid: false };
       }
-      const path = [previous.pos, ...routed, roadTarget.pos].filter(
-        (point, index, points) =>
-          index === 0 ||
-          Math.hypot(
-            point.x - points[index - 1].x,
-            point.y - points[index - 1].y,
-          ) > 0.5,
-      );
+      const path = dedupePath([previous.pos, ...routed, roadTarget.pos]);
       return {
         pos: roadTarget.pos,
         pathFromPrevious: path,

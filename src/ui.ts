@@ -151,9 +151,15 @@ export class Ui {
     });
 
     for (const button of this.serviceButtons) {
-      button.addEventListener("click", () =>
-        game.setBuildTransitMode(button.dataset.transitMode as TransitMode),
-      );
+      button.addEventListener("click", () => {
+        const mode = button.dataset.transitMode as TransitMode;
+        game.setBuildTransitMode(mode);
+        // Buses are the only mode that routes on streets, and the citywide
+        // graph is a few megabytes — so it is fetched here, on the click that
+        // makes it relevant, rather than at boot. Drawing works off the tile
+        // graph until it lands.
+        if (mode === "bus") renderer.ensureRoadGraph();
+      });
     }
     for (const button of this.alignmentButtons) {
       button.addEventListener("click", () =>
