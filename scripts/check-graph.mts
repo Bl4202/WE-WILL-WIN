@@ -76,12 +76,14 @@ check(
   graph.nodeCount > 100_000 && graph.edgeCount > 100_000,
   `${graph.nodeCount} nodes, ${graph.edgeCount} edges`,
 );
-// This runs once, lazily, while the player is drawing — it is allowed to
-// cost something, but not a visible stall.
+// Measured at 73 ms to decode 11.4 MB and build the adjacency and the
+// 1.34M-point spatial index. This runs once, lazily, while the player is
+// drawing, so the ceiling is set to catch an order-of-magnitude regression
+// rather than to police the exact number on someone else's machine.
 check(
-  "decode and index stay under a second",
-  decodeMs < 1000,
-  `${decodeMs.toFixed(0)} ms to decode ${(binary.length / 1048576).toFixed(1)} MB and build both indexes`,
+  "decode and index stay well under a frame budget's worth of stall",
+  decodeMs < 400,
+  `${decodeMs.toFixed(0)} ms to decode ${(binary.length / 1048576).toFixed(1)} MB and build both indexes (baseline 73)`,
 );
 
 // ── Encoder/decoder agreement ─────────────────────────────────────────

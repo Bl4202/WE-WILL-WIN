@@ -14,8 +14,13 @@
  * Nothing here depends on the camera.
  *
  * It is fetched lazily — the game asks for it the first time the player draws
- * a bus line — so the < 8 s boot gate is untouched. About 5.5 MB over the
- * wire, then decoded straight into typed arrays with no JSON parse.
+ * a bus line — so the < 8 s boot gate is untouched.
+ *
+ * Measured cost, all of it paid once and only by a player who builds a bus
+ * line: about 5.5 MB gzipped over the wire, 11.4 MB decoded, 73 ms to decode
+ * and build both indexes, and roughly 34 MB of typed arrays resident
+ * afterwards. Snapping a cursor to the network then costs about 3 us, and a
+ * cross-city route 6-18 ms.
  */
 import type { Projection } from "./geo";
 import type { Vec2 } from "./types";
