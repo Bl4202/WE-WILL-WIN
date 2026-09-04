@@ -656,8 +656,7 @@ export class Simulation {
           continue;
         }
       }
-      this.passengers.delete(passengerId);
-      this.kpis.unservedTrips++;
+      this.retirePlannedTrip(passengerId);
     }
   }
 
@@ -718,8 +717,7 @@ export class Simulation {
           passenger.phase = "waiting";
           keep.push(pid);
         } else {
-          this.passengers.delete(pid);
-          this.kpis.unservedTrips++;
+          this.retirePlannedTrip(pid);
         }
       }
       station.waiting = keep;
@@ -739,11 +737,30 @@ export class Simulation {
       if (heading !== undefined && replan(passenger, heading)) {
         stillWalking.push(pid);
       } else {
-        this.passengers.delete(pid);
-        this.kpis.unservedTrips++;
+        this.retirePlannedTrip(pid);
       }
     }
     this.walking = stillWalking;
+  }
+
+  /**
+   * Retire a passenger whose journey can no longer be completed.
+   *
+   * The trip was booked as an avoided car trip back when it was successfully
+   * planned (spawnTrip), so failing later is not just an unserved trip — it
+   * is an avoided trip that has to be given back. Leaving the credit in
+   * place put a failed journey in the numerator of
+   * `avoided / (car + avoided)`, inflating transit share, which feeds
+   * congestionIndex, which feeds vehicle speed. The KPI and the physics both
+   * drifted with every withdrawal.
+   */
+  private retirePlannedTrip(passengerId: number): void {
+    this.passengers.delete(passengerId);
+    this.kpis.unservedTrips++;
+    if (this.traffic.avoidedCarTripsToday > 0) {
+      this.traffic.avoidedCarTripsToday--;
+    }
+    this.traffic.carTripsToday++;
   }
 
   private updateLineHeadway(line: Line): void {
@@ -1123,14 +1140,27 @@ export class Simulation {
       this.nearNetworkZoneIdx.length > 1 &&
       this.rng.next() < LOCAL_DEMAND_FRACTION;
 
+    // A pool with zero total weight yields -1. The trip was already drawn
+    // from the accumulator by the caller, so it exists and has to land in a
+    // counter — these two returns used to drop it silently, which is the
+    // one way a trip can vanish from the books entirely. Reachable whenever
+    // a scenario has two or more zero-population tracts in the pool.
     let origin: Zone;
     if (useLocalPool) {
       const li = this.sampleZone(amBound ? this.cumPopNear : this.cumJobsNear);
-      if (li < 0) return;
+      if (li < 0) {
+        this.kpis.unservedTrips++;
+        this.traffic.carTripsToday++;
+        return;
+      }
       origin = this.zones[this.nearNetworkZoneIdx[li]];
     } else {
       const oi = this.sampleZone(amBound ? this.cumPop : this.cumJobs);
-      if (oi < 0) return;
+      if (oi < 0) {
+        this.kpis.unservedTrips++;
+        this.traffic.carTripsToday++;
+        return;
+      }
       origin = this.zones[oi];
     }
 
@@ -1212,7 +1242,11 @@ export class Simulation {
   private rebuildNearNetworkZones(): void {
     this.nearNetworkZoneIdx = [];
     for (let i = 0; i < this.zones.length; i++) {
-      if (this.stationsNear(this.zones[i].center).length > 0) {
+      // Only ever asked whether *any* station is in range. Calling
+      // stationsNear here allocated an array, scanned every station, sorted
+      // it and sliced the top three — 1,560 times per commitLine, inside the
+      // player's click, to answer a yes/no question.
+      if (this.hasStationNear(this.zones[i].center)) {
         this.nearNetworkZoneIdx.push(i);
       }
     }
@@ -1227,6 +1261,17 @@ export class Simulation {
       this.cumPopNear[k] = p;
       this.cumJobsNear[k] = j;
     }
+  }
+
+  /** Whether any station is within walking distance. Exits on the first hit. */
+  private hasStationNear(pos: Vec2): boolean {
+    const radiusSq = WALK_RADIUS * WALK_RADIUS;
+    for (const s of this.stations.values()) {
+      const dx = s.pos.x - pos.x;
+      const dy = s.pos.y - pos.y;
+      if (dx * dx + dy * dy <= radiusSq) return true;
+    }
+    return false;
   }
 
   private stationsNear(pos: Vec2): StationAccess[] {

@@ -163,10 +163,20 @@ export const ROLLING_STOCK_CATALOG: readonly RollingStockSpec[] = [
   },
 ] as const;
 
+/**
+ * Indexed once, because this is a per-vehicle, per-tick lookup: moveVehicles
+ * and accrueOperatingCosts between them call it several times per vehicle on
+ * every one of the four ticks a sim-second, and a linear scan of the
+ * catalogue for each was pure overhead.
+ */
+const ROLLING_STOCK_BY_ID = new Map<RollingStockModelId, RollingStockSpec>(
+  ROLLING_STOCK_CATALOG.map((item) => [item.id, item]),
+);
+
 export function getRollingStockSpec(
   id: RollingStockModelId,
 ): RollingStockSpec {
-  return ROLLING_STOCK_CATALOG.find((item) => item.id === id)!;
+  return ROLLING_STOCK_BY_ID.get(id)!;
 }
 
 export interface TransitModeSpec {
@@ -301,25 +311,33 @@ interface LinePointLike {
   levelMFromPrevious?: number;
 }
 
+/**
+ * The two derived metro specs, built once instead of on every lookup.
+ *
+ * This function is called per vehicle per tick from moveVehicles and
+ * accrueOperatingCosts, and the elevated/underground branches each allocated
+ * a fresh spread object every time — around 1.15M short-lived objects a
+ * second at the top time multiplier, purely for the garbage collector.
+ */
+const ELEVATED_METRO_SPEC: TransitModeSpec = {
+  ...MODE_SPECS.metro,
+  ...ELEVATED_METRO,
+  speedFactor: 1.04,
+};
+const UNDERGROUND_METRO_SPEC: TransitModeSpec = {
+  ...MODE_SPECS.metro,
+  ...UNDERGROUND_METRO,
+  speedFactor: 1.08,
+};
+
 export function getTransitModeSpec(
   mode: TransitMode,
   alignment: LineAlignment = "surface",
 ): TransitModeSpec {
-  const base = MODE_SPECS[mode];
-  if (mode !== "metro") return base;
-  if (alignment === "elevated") {
-    return {
-      ...base,
-      ...ELEVATED_METRO,
-      speedFactor: 1.04,
-    };
-  }
-  if (alignment !== "underground") return base;
-  return {
-    ...base,
-    ...UNDERGROUND_METRO,
-    speedFactor: 1.08,
-  };
+  if (mode !== "metro") return MODE_SPECS[mode];
+  if (alignment === "elevated") return ELEVATED_METRO_SPEC;
+  if (alignment === "underground") return UNDERGROUND_METRO_SPEC;
+  return MODE_SPECS.metro;
 }
 
 export function estimateLineConstruction(

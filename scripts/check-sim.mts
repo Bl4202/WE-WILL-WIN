@@ -191,6 +191,20 @@ section("trip conservation");
     strandedWaiting === 0,
     `${strandedWaiting} stranded (had ${before} active before the unassign)`,
   );
+
+  // Every avoided car trip is a journey that was successfully planned, so it
+  // must still be accounted for as completed, in flight, or given back when
+  // the journey later failed. If a withdrawal leaves the credit behind, this
+  // count drifts above what actually happened and transit share — which
+  // feeds congestion, which feeds vehicle speed — reads high forever.
+  const avoided = snap.traffic.avoidedCarTripsToday;
+  const accountedFor = snap.kpis.completedTrips + snap.passengers.size;
+  check(
+    "avoided car trips are all completed, in flight, or given back",
+    avoided <= accountedFor,
+    `${avoided} avoided vs ${accountedFor} accounted for ` +
+      `(${snap.kpis.completedTrips} completed + ${snap.passengers.size} active)`,
+  );
 }
 
 // ── 3. Fleet size actually buys service ───────────────────────────────
@@ -299,14 +313,15 @@ section("performance");
   line(fresh, 10, 390);
   const commitMs = performance.now() - c0;
 
-  // Measured 9.4 ms at 400 stations, rising to 20.9 ms at 800 — commitLine
-  // scales with the station count because it rescans every zone. It runs
-  // synchronously inside the player's click, so it is worth watching even
-  // though it is not currently a visible stall.
+  // 9.4 ms at 400 stations before hasStationNear replaced the allocate-scan-
+  // sort-slice in rebuildNearNetworkZones, 2.2 ms after. This runs
+  // synchronously inside the player's click, so the ceiling is set close
+  // enough to catch the early-exit being lost again, but loose enough to
+  // survive a slow machine.
   check(
     "committing a line into a large network stays responsive",
-    commitMs < 40,
-    `${commitMs.toFixed(1)} ms to commit the 40th line (baseline 9.4)`,
+    commitMs < 12,
+    `${commitMs.toFixed(1)} ms to commit the 40th line (baseline 2.2)`,
   );
 }
 
