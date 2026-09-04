@@ -16,5 +16,5 @@
   },
   "include": ["**/*.mts"],
   "//exclude": "check-sim.mts imports src/, which needs the bundler-resolution settings these options deliberately do not use. It is checked by tsconfig.sim.json instead.",
-  "exclude": ["check-sim.mts"]
+  "exclude": ["check-sim.mts", "check-graph.mts"]
 }

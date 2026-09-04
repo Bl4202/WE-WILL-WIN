@@ -12,7 +12,8 @@
     "check:gtfs": "tsx scripts/check-gtfs.mts",
     "typecheck:scripts": "tsc -p scripts/tsconfig.json",
     "check:sim": "tsx scripts/check-sim.mts",
-    "typecheck:sim": "tsc -p scripts/tsconfig.sim.json"
+    "typecheck:sim": "tsc -p scripts/tsconfig.sim.json",
+    "check:graph": "tsx scripts/check-graph.mts"
   },
   "dependencies": {
     "@deck.gl/core": "^9.1.0",

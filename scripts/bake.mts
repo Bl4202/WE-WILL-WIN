@@ -10,6 +10,7 @@
  *   LODES RAC residents         ├→ demand.json          (census-tract zones)
  *   LODES WAC jobs per block    ┘
  *   OpenStreetMap via Overpass  → street_graph.json     (routing graph)
+ *                               → street_graph.bin      (roads, client copy)
  *   stops × graph               → conflation.json       (stops snapped to it)
  *
  * Plus meta.json (provenance/attribution, §6.2) and bake_report.json
@@ -18,9 +19,15 @@
  * PMTiles/Parquet formats until the bundle format hardens (§1.4).
  *
  * The client loads only demand/baseline/meta at startup. street_graph.json
- * is ~26 MB and exists for the Phase-2 kernel (§1.2 contraction hierarchies,
+ * is ~25 MB and exists for the Phase-2 kernel (§1.2 contraction hierarchies,
  * §4.1 road assignment); putting it on the boot path would blow the < 8 s
- * Phase-1 exit gate on its own.
+ * Phase-1 exit gate on its own. It stays out of git for the same reason.
+ *
+ * street_graph.bin is the client's copy of the same graph: roads only, as
+ * typed arrays, ~11 MB and about 5.5 MB gzipped over the wire. The game
+ * fetches it lazily — only once the player first draws a bus line — so it
+ * never touches the boot path either, but bus routing is no longer limited
+ * to whatever road tiles the camera happens to have loaded.
  *
  * Usage:  npm run bake                      full bake
  *         npm run bake -- --skip-network    skip Overpass; demand + baseline
@@ -33,6 +40,7 @@ import { createGunzip } from "node:zlib";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { conflateStops } from "./lib/conflate.mts";
+import { encodeGraphBin } from "./lib/graph-bin.mts";
 import {
   readGtfsTables,
   stopsWithModes,
@@ -563,6 +571,17 @@ async function bakeNetwork(stops: BakedStop[]): Promise<void> {
   }
 
   await writeFile(join(OUT, "street_graph.json"), JSON.stringify(graph));
+
+  const encoded = encodeGraphBin(graph);
+  await writeFile(join(OUT, "street_graph.bin"), encoded.buffer);
+  console.log(
+    `  street_graph.bin: ${encoded.header.nodeCount.toLocaleString()} nodes, ` +
+      `${encoded.header.edgeCount.toLocaleString()} road edges, ` +
+      `${(encoded.buffer.length / 1048576).toFixed(1)} MB ` +
+      `(dropped ${encoded.droppedEdges.toLocaleString()} edges — of which ` +
+      `${encoded.droppedIslandEdges.toLocaleString()} were roads stranded off ` +
+      `the main component — and ${encoded.droppedNodes.toLocaleString()} nodes)`,
+  );
   await writeFile(
     join(OUT, "conflation.json"),
     JSON.stringify({ ...conflation, unmatched: unmatchedDetail }),
