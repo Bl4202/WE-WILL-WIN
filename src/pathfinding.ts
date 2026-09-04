@@ -71,10 +71,19 @@ export class TransitPlanner {
         for (const j of neighbors) {
           if (j < 0 || j >= line.stationIds.length) continue;
           const rideDist = Math.abs(line.stationDist[j] - line.stationDist[i]);
+          // Price the hop at the speed this line's stock actually runs,
+          // capped by the segment's own limit — the same two numbers
+          // moveVehicles and updateLineHeadway use. Calling runTimeSec with
+          // no speed silently fell back to TRAIN_MAX_SPEED (22.2 m/s), so a
+          // regional-rail hop good for 40 m/s was valued at nearly double
+          // its true run time and lost every comparison against metro.
+          const limit =
+            (line.segmentDetails[Math.min(i, j)]?.speedLimitKph ?? 90) / 3.6;
+          const topSpeed = Math.min(line.topSpeedMps, limit);
           add(
             key(sid, line.id),
             key(line.stationIds[j], line.id),
-            (runTimeSec(rideDist) / spec.speedFactor) *
+            (runTimeSec(rideDist, topSpeed) / spec.speedFactor) *
               (1 + spec.congestionExposure * 0.45) +
               spec.dwellSec,
           );

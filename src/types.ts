@@ -110,6 +110,12 @@ export interface Line {
   targetHeadwaySec: number;
   /** Achievable headway from the assigned fleet. Zero means no service. */
   headwaySec: number;
+  /**
+   * Mean free-flow top speed of the assigned fleet, m/s. Kept on the line so
+   * the journey planner prices rides at the speed the stock actually runs
+   * rather than falling back to the generic metro maximum.
+   */
+  topSpeedMps: number;
   vehicleIds: number[];
   stats: LineOperatingStats;
 }

@@ -17,6 +17,7 @@ import {
   PLAN_CACHE_LIMIT,
   SAME_STATION_M,
   SIM_DT,
+  TRAIN_MAX_SPEED,
   WALK_RADIUS,
   WALK_SPEED,
 } from "./constants";
@@ -83,6 +84,22 @@ const HOURLY_WEIGHT = [
 const HOURLY_SUM = HOURLY_WEIGHT.reduce((a, b) => a + b, 0);
 const PEAK_HOURLY_WEIGHT = Math.max(...HOURLY_WEIGHT);
 const DESTINATION_CANDIDATES = 48;
+
+/**
+ * How much of its free-flow speed a service keeps at the current congestion.
+ *
+ * Shared by the two places that must agree about it: `moveVehicles`, which
+ * applies it to every displacement, and `updateLineHeadway`, which computes
+ * the frequency the UI advertises and the planner prices waiting time from.
+ * They did not agree — headway ignored congestion entirely — so a bus line
+ * promised a service 1.6-2.4x better than it delivered.
+ */
+function trafficFactorFor(
+  mode: { congestionExposure: number },
+  congestionIndex: number,
+): number {
+  return Math.max(0.42, 1 - mode.congestionExposure * (congestionIndex / 135));
+}
 
 const LINE_COLORS = [
   "#e53935", "#1e88e5", "#43a047", "#fdd835", "#8e24aa",
@@ -355,6 +372,7 @@ export class Simulation {
       length: stationDist[stationDist.length - 1],
       targetHeadwaySec: DEFAULT_HEADWAY_SEC,
       headwaySec: 0,
+      topSpeedMps: TRAIN_MAX_SPEED,
       vehicleIds: [],
       stats: {
         boardingsToday: 0,
@@ -743,7 +761,16 @@ export class Simulation {
         0,
       ) / Math.max(1, fleet.length);
     const mode = getTransitModeSpec(line.mode, line.alignment);
-    let oneWaySec = line.stationIds.length * mode.dwellSec;
+    // Published so the planner can price rides at the speed this line's
+    // stock actually runs. It used to fall back to runTimeSec's 22.2 m/s
+    // default, which valued a 160 kph regional-rail hop at nearly twice its
+    // real duration and quietly made regional rail the worst option in the
+    // routing graph.
+    line.topSpeedMps = averageTopSpeedMps;
+
+    // One dwell per departure, so N stations means N-1 of them on a one-way
+    // leg. Charging N and then doubling billed both terminals twice.
+    let oneWaySec = Math.max(0, line.stationIds.length - 1) * mode.dwellSec;
     for (let i = 1; i < line.stationDist.length; i++) {
       const limit = (line.segmentDetails[i - 1]?.speedLimitKph ?? 90) / 3.6;
       oneWaySec +=
@@ -752,6 +779,13 @@ export class Simulation {
           Math.min(averageTopSpeedMps, limit),
         ) / mode.speedFactor;
     }
+    // The same congestion drag moveVehicles applies to every displacement.
+    // Leaving it out meant a bus line advertised a headway 1.6-2.4x better
+    // than it ran — and the planner priced boarding wait from that number,
+    // so buses were systematically over-chosen and the queues they could
+    // not clear were the result.
+    oneWaySec /= trafficFactorFor(mode, this.traffic.congestionIndex);
+
     const cycleSec =
       line.direction === "bidirectional"
         ? oneWaySec * 2
@@ -900,11 +934,9 @@ export class Simulation {
         hopLen,
         Math.min(stock.maxSpeedKph / 3.6, trackLimitMps),
       );
-      const trafficFactor = Math.max(
-        0.42,
-        1 -
-          modeSpec.congestionExposure *
-            (this.traffic.congestionIndex / 135),
+      const trafficFactor = trafficFactorFor(
+        modeSpec,
+        this.traffic.congestionIndex,
       );
       const before = v.dist;
       v.dist +=
@@ -1346,12 +1378,27 @@ export class Simulation {
     this.traffic.connectedGateways = connectedFacilities.filter(
       (facility) => facility.connectsOutside,
     ).length;
+    const previousCongestion = this.traffic.congestionIndex;
     this.traffic.congestionIndex = Math.round(
       Math.max(
         12,
         Math.min(100, unconstrained * (1 - share * 0.58 - facilityRelief)),
       ),
     );
+
+    // Headway depends on congestion, so it has to be re-derived when
+    // congestion moves — otherwise a line keeps advertising its 03:00
+    // frequency through the morning peak. Only road-exposed modes actually
+    // change, and this runs every 30 sim-seconds, so it is gated on a real
+    // move rather than run unconditionally.
+    if (this.traffic.congestionIndex !== previousCongestion) {
+      for (const line of this.lines.values()) {
+        if (line.vehicleIds.length === 0) continue;
+        if (getTransitModeSpec(line.mode, line.alignment).congestionExposure > 0) {
+          this.updateLineHeadway(line);
+        }
+      }
+    }
   }
 
   // ── Read-only view for render/UI ────────────────────────────────────
