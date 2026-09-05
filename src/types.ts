@@ -36,6 +36,12 @@ export interface Station {
   /** Metres relative to street level: negative underground, positive elevated. */
   levelM: number;
   platformLengthM: number;
+  /**
+   * Angle of the platform's long axis in the planar metre frame, radians.
+   * Chosen by the player while drafting, so it is stored rather than guessed
+   * from the track at render time.
+   */
+  orientationRad: number;
   platformCount: number;
   entrances: number;
   boardingsToday: number;

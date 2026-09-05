@@ -28,12 +28,15 @@ import {
   FACILITY_SPECS,
   STARTING_CAPITAL,
   STARTING_OPERATING_BALANCE,
+  defaultPlatformLengthM,
   estimateLineConstruction,
   facilityBuildCost,
   getRollingStockSpec,
   getTransitModeSpec,
   normalizeAlignment,
+  resolvedStationOrientation,
 } from "./mobility";
+import { stationHalfLengthM } from "./geo";
 import {
   TransitPlanner,
   type PlannedTrip,
@@ -74,7 +77,16 @@ export interface LinePoint {
   alignmentFromPrevious?: RailAlignment;
   /** Metres relative to street level for the segment from the previous point. */
   levelMFromPrevious?: number;
+  /**
+   * Angle of this station's platform, radians. The player sets it while
+   * drafting; a scripted or headless line leaves it out and the direction of
+   * the track supplies it instead.
+   */
+  orientationRad?: number;
 }
+
+/** A draft point carrying the platform size the pricing pass needs. */
+type PricedPoint = LinePoint & { platformHalfLengthM?: number };
 
 /** Relative trip-emission weight per hour of day (AM peak, midday, PM peak). */
 const HOURLY_WEIGHT = [
@@ -244,10 +256,30 @@ export class Simulation {
     alignment: RailAlignment,
   ): ConstructionEstimate {
     return estimateLineConstruction(
-      points,
+      this.withPlatformGeometry(points),
       mode,
       normalizeAlignment(mode, alignment),
     );
+  }
+
+  /**
+   * An existing station keeps the platform it was built with, whatever mode
+   * is being drawn now — so a metro branching off a regional-rail station
+   * attaches to that station's real ends rather than to a 180 m guess.
+   */
+  private withPlatformGeometry(points: LinePoint[]): PricedPoint[] {
+    return points.map((point) => {
+      const station =
+        point.existingStationId !== undefined
+          ? this.stations.get(point.existingStationId)
+          : undefined;
+      if (!station) return point;
+      return {
+        ...point,
+        orientationRad: point.orientationRad ?? station.orientationRad,
+        platformHalfLengthM: stationHalfLengthM(station.platformLengthM),
+      };
+    });
   }
 
   /** Commit a drawn service. Returns null if invalid or over budget. */
@@ -335,8 +367,8 @@ export class Simulation {
         pos: { ...p.pos },
         primaryAlignment,
         levelM,
-        platformLengthM:
-          mode === "regional-rail" ? 240 : mode === "metro" ? 180 : 28,
+        platformLengthM: defaultPlatformLengthM(mode),
+        orientationRad: resolvedStationOrientation(points, pointIndex),
         platformCount: direction === "bidirectional" ? 2 : 1,
         entrances:
           primaryAlignment === "underground" ? 3 : primaryAlignment === "elevated" ? 2 : 1,

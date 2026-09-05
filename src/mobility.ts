@@ -4,6 +4,7 @@
  * drift apart.
  */
 import type { Projection } from "./geo";
+import { bearingRad, stationHalfLengthM, stationNodes } from "./geo";
 import type {
   ConstructionEstimate,
   FacilityType,
@@ -309,6 +310,34 @@ interface LinePointLike {
   alignmentFromPrevious?: RailAlignment;
   /** Metres relative to the street for the segment that ends here. */
   levelMFromPrevious?: number;
+  /** Angle of this station's platform, radians. Derived when absent. */
+  orientationRad?: number;
+  /** Half the platform of an existing station, which may differ from `mode`. */
+  platformHalfLengthM?: number;
+}
+
+/** Platform length a new station of this mode opens with, metres. */
+export function defaultPlatformLengthM(mode: TransitMode): number {
+  return mode === "regional-rail" ? 240 : mode === "metro" ? 180 : 28;
+}
+
+/**
+ * The platform angle to build with. A point drawn by the player carries its
+ * own; anything else — a scripted line, a headless test — falls back to the
+ * direction of the track through it, which is how the renderer used to guess.
+ */
+export function resolvedStationOrientation(
+  points: LinePointLike[],
+  index: number,
+): number {
+  const explicit = points[index].orientationRad;
+  if (explicit !== undefined) return explicit;
+  if (points.length < 2) return 0;
+  if (index === 0) return bearingRad(points[0].pos, points[1].pos);
+  if (index === points.length - 1) {
+    return bearingRad(points[index - 1].pos, points[index].pos);
+  }
+  return bearingRad(points[index - 1].pos, points[index + 1].pos);
 }
 
 /**
@@ -340,6 +369,38 @@ export function getTransitModeSpec(
   return MODE_SPECS.metro;
 }
 
+/**
+ * `prev centre -> prev end -> next end -> next centre`, using whichever pair
+ * of platform ends face each other. Vehicles still stop at the centre, so
+ * every distance measured off this path stays consistent with `stationDist`.
+ */
+export function platformSegmentPath(
+  fromPos: Vec2,
+  fromNodes: [Vec2, Vec2],
+  toPos: Vec2,
+  toNodes: [Vec2, Vec2],
+): Vec2[] {
+  let best: [Vec2, Vec2] = [fromNodes[0], toNodes[0]];
+  let bestDistance = Infinity;
+  for (const a of fromNodes) {
+    for (const b of toNodes) {
+      const distance = Math.hypot(b.x - a.x, b.y - a.y);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = [a, b];
+      }
+    }
+  }
+  const path: Vec2[] = [{ ...fromPos }];
+  for (const point of [best[0], best[1], toPos]) {
+    const last = path[path.length - 1];
+    if (Math.hypot(point.x - last.x, point.y - last.y) > 0.5) {
+      path.push({ ...point });
+    }
+  }
+  return path.length >= 2 ? path : [{ ...fromPos }, { ...toPos }];
+}
+
 export function estimateLineConstruction(
   points: LinePointLike[],
   mode: TransitMode,
@@ -353,11 +414,29 @@ export function estimateLineConstruction(
   let weightedNoise = 0;
   let weightedDepth = 0;
   const segmentDetails: TrackSegmentDetail[] = [];
+  // Track attaches to the ends of a platform, not to its centre. Resolve each
+  // platform's axis once, then run every straight segment out of the near end
+  // of one station and into the near end of the next. A bus segment keeps its
+  // road-routed path: it already follows the street, and a 28 m stop has its
+  // ends only 14 m out.
+  const defaultHalfLengthM = stationHalfLengthM(defaultPlatformLengthM(mode));
+  const platformNodes = points.map((point, index) =>
+    stationNodes(
+      point.pos,
+      resolvedStationOrientation(points, index),
+      point.platformHalfLengthM ?? defaultHalfLengthM,
+    ),
+  );
   for (let i = 1; i < points.length; i++) {
     const segmentPath =
       points[i].pathFromPrevious && points[i].pathFromPrevious!.length >= 2
         ? points[i].pathFromPrevious!.map((point) => ({ ...point }))
-        : [{ ...points[i - 1].pos }, { ...points[i].pos }];
+        : platformSegmentPath(
+            points[i - 1].pos,
+            platformNodes[i - 1],
+            points[i].pos,
+            platformNodes[i],
+          );
     let segmentLength = 0;
     for (let pathIndex = 1; pathIndex < segmentPath.length; pathIndex++) {
       segmentLength += Math.hypot(

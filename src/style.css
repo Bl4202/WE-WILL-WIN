@@ -2364,3 +2364,80 @@ textarea {
 .loading-track span {
   background: #fff;
 }
+
+/* Tutorial */
+
+#tutorial-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+}
+
+#tutorial-spotlight {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  border-radius: 14px;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.6) !important;
+  transition: left 220ms cubic-bezier(0.16, 1, 0.3, 1), top 220ms cubic-bezier(0.16, 1, 0.3, 1),
+    width 220ms cubic-bezier(0.16, 1, 0.3, 1), height 220ms cubic-bezier(0.16, 1, 0.3, 1), opacity 180ms ease;
+  pointer-events: none;
+}
+
+.tutorial-tooltip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 300px;
+  padding: 16px;
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--panel-raised);
+  box-shadow: var(--shadow) !important;
+  opacity: 0;
+  transition: left 220ms cubic-bezier(0.16, 1, 0.3, 1), top 220ms cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 180ms ease;
+}
+
+.tutorial-tooltip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.tutorial-tooltip-head .icon-btn {
+  width: 26px;
+  height: 26px;
+}
+
+.tutorial-tooltip h2 {
+  margin: 0 0 6px;
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.tutorial-tooltip p {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.tutorial-tooltip-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.tutorial-tooltip-actions .secondary-btn {
+  flex: none;
+}
+
+.tutorial-tooltip-actions .primary-btn {
+  flex: 1;
+}

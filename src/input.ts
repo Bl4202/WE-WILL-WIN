@@ -22,6 +22,52 @@ export function bindInput(
 ): void {
   const map = renderer.map;
 
+  // Rotating a platform is a held gesture, not a tapped one: the two keys set
+  // a direction and a frame loop integrates it. A fixed step per press cannot
+  // give a smooth turn, and leaning on the OS auto-repeat would make the rate
+  // depend on the player's keyboard settings.
+  const ROTATE_RAD_PER_SEC = Math.PI / 2;
+  let rotateDirection = 0;
+  let rotateFrame = 0;
+  let rotateLastMs = 0;
+
+  const setRotateDirection = (direction: number): void => {
+    if (rotateDirection === direction) return;
+    rotateDirection = direction;
+    if (rotateFrame !== 0) cancelAnimationFrame(rotateFrame);
+    rotateFrame = 0;
+    if (direction === 0) return;
+    rotateLastMs = performance.now();
+    rotateFrame = requestAnimationFrame(stepRotation);
+  };
+
+  function stepRotation(nowMs: number): void {
+    if (rotateDirection === 0) return;
+    if (!game.blueprinting) {
+      setRotateDirection(0);
+      return;
+    }
+    // Clamped so a backgrounded tab does not return and spin the platform
+    // through however many seconds it was away.
+    const dt = Math.min((nowMs - rotateLastMs) / 1000, 0.1);
+    rotateLastMs = nowMs;
+    // A platform already in the ground does not turn, so while the cursor is
+    // on one the offset must not creep either — otherwise the readout counts
+    // up against a ghost that is visibly standing still.
+    if (!renderer.hoverOrientationLocked) {
+      game.adjustStationRotation(rotateDirection * ROTATE_RAD_PER_SEC * dt);
+    }
+    rotateFrame = requestAnimationFrame(stepRotation);
+  }
+
+  const actionFor = (rawKey: string): InputAction | null => {
+    const key = normalizeInputKey(rawKey);
+    return (Object.entries(preferences.keybinds).find(
+      ([, boundKey]) =>
+        boundKey !== "" && normalizeInputKey(boundKey) === key,
+    )?.[0] ?? null) as InputAction | null;
+  };
+
   map.on("mousemove", (e) => {
     if (game.mode === "place") {
       renderer.hoverLngLat = [e.lngLat.lng, e.lngLat.lat];
@@ -31,11 +77,24 @@ export function bindInput(
       return;
     }
     if (game.blueprinting) {
-      const target = renderer.pickBuildTarget(getSnapshot(), game.draft, e.point, [
-        e.lngLat.lng,
-        e.lngLat.lat,
-      ], game.buildTransitMode);
+      const target = renderer.pickBuildTarget(
+        getSnapshot(),
+        game.draft,
+        e.point,
+        [e.lngLat.lng, e.lngLat.lat],
+        game.buildTransitMode,
+        false,
+        game.stationRotationOffset,
+      );
       renderer.hoverLngLat = renderer.toLngLat(target.pos);
+      // The *base* angle, not the resolved one: the renderer re-adds the
+      // rotation offset every frame, so the ghost keeps turning while a
+      // rotate key is held and the mouse is not moving.
+      renderer.hoverBaseOrientationRad = target.orientationBaseRad;
+      renderer.hoverOrientationLocked = target.orientationLocked;
+      // The first platform of a draft has no track to line up with yet, so it
+      // follows the cursor until there is a second point to face.
+      game.aimFirstDraftPoint(target.pos);
       renderer.hoverSnapped = target.snapped && target.valid;
       // Only a committed station carries a waiting queue; a draft point has
       // no id yet, so there is nothing to report for it.
@@ -71,10 +130,15 @@ export function bindInput(
     }
 
     if (game.blueprinting) {
-      const target = renderer.pickBuildTarget(snap, game.draft, e.point, [
-        e.lngLat.lng,
-        e.lngLat.lat,
-      ], game.buildTransitMode, true);
+      const target = renderer.pickBuildTarget(
+        snap,
+        game.draft,
+        e.point,
+        [e.lngLat.lng, e.lngLat.lat],
+        game.buildTransitMode,
+        true,
+        game.stationRotationOffset,
+      );
       if (!target.valid) {
         game.lastNotice =
           game.buildTransitMode === "bus"
@@ -84,6 +148,7 @@ export function bindInput(
       }
       game.addDraftPoint({
         pos: target.pos,
+        orientationRad: target.orientationRad,
         existingStationId: target.existingStationId,
         pathFromPrevious: target.pathFromPrevious,
         demolitionSitesFromPrevious: target.demolitionSitesFromPrevious,
@@ -131,6 +196,10 @@ export function bindInput(
     const dialog = document.getElementById("settings-dialog");
     if (dialog instanceof HTMLDialogElement && dialog.open) return;
 
+    // Same reasoning for the tutorial overlay: it sits on top of the game
+    // but isn't a modal dialog, so shortcuts would otherwise still land.
+    if (!document.getElementById("tutorial-overlay")?.classList.contains("hidden")) return;
+
     // Chords belong to the browser. Without this, Ctrl/Cmd+D also toggles
     // the demand layer while bookmarking, and Ctrl+A, Ctrl+B and Ctrl+V all
     // fire game actions on top of their real ones.
@@ -141,9 +210,7 @@ export function bindInput(
     if (e.repeat) return;
 
     const key = normalizeInputKey(e.key);
-    const action = (Object.entries(preferences.keybinds).find(
-      ([, boundKey]) => normalizeInputKey(boundKey) === key,
-    )?.[0] ?? null) as InputAction | null;
+    const action = actionFor(e.key);
 
     // Digits pick a speed, but only when nothing has claimed them. This used
     // to run before the switch and return unconditionally, so an action
@@ -174,6 +241,12 @@ export function bindInput(
             next,
           );
         }
+        break;
+      case "rotateStationLeft":
+        if (game.blueprinting) setRotateDirection(-1);
+        break;
+      case "rotateStationRight":
+        if (game.blueprinting) setRotateDirection(1);
         break;
       case "finishLine":
         if (game.blueprinting) game.finishLine();
@@ -211,4 +284,18 @@ export function bindInput(
         break;
     }
   });
+
+  window.addEventListener("keyup", (e) => {
+    const action = actionFor(e.key);
+    if (
+      (action === "rotateStationLeft" && rotateDirection < 0) ||
+      (action === "rotateStationRight" && rotateDirection > 0)
+    ) {
+      setRotateDirection(0);
+    }
+  });
+
+  // A key held while the window loses focus never sends its keyup, so without
+  // this the platform keeps turning behind an alt-tab.
+  window.addEventListener("blur", () => setRotateDirection(0));
 }

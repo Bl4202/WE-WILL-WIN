@@ -10,6 +10,7 @@ import { bindInput } from "./input";
 import { createHoustonFacilities } from "./mobility";
 import { loadPreferences } from "./preferences";
 import { MapRenderer } from "./render-map";
+import { hasSeenTutorial, Tutorial } from "./tutorial";
 import { Ui } from "./ui";
 import { loadWorld, zonesFromDemand } from "./world";
 
@@ -28,7 +29,16 @@ async function boot(): Promise<void> {
     const ui = new Ui(game, renderer, preferences);
     bindInput(renderer, game, () => game.sim.snapshot(), preferences);
 
-    renderer.map.once("load", () => loading.classList.add("done"));
+    const tutorial = new Tutorial();
+    document.getElementById("tutorial-replay")!.addEventListener("click", () => {
+      (document.getElementById("settings-dialog") as HTMLDialogElement).close();
+      tutorial.start();
+    });
+
+    renderer.map.once("load", () => {
+      loading.classList.add("done");
+      if (!hasSeenTutorial()) tutorial.start();
+    });
 
     const renderFrame = (snap: ReturnType<typeof game.sim.snapshot>) => {
       renderer.update(snap, game);

@@ -757,14 +757,41 @@ export class Ui {
       this.game.buildAlignment === "underground"
         ? Math.abs(this.game.buildLevelM) + " m tunnel"
         : this.game.buildAlignment;
+    // The platform angle is otherwise only readable off the ghost itself,
+    // which is hard to judge by eye near the diagonals. Below about a third
+    // of a degree the rounding would just print "0°" and flicker.
+    const turnDeg = Math.round(
+      (this.game.stationRotationOffset * 180) / Math.PI,
+    );
+    if (turnDeg !== 0) {
+      return (
+        "Platform turned " +
+        turnDeg +
+        "° · " +
+        this.rotateKeyHint() +
+        " · placing resets it"
+      );
+    }
+    const rotate = " · " + this.rotateKeyHint() + " turns the platform";
     return this.game.draft.length === 0
       ? "Place the first " +
           getTransitModeSpec(this.game.buildTransitMode).shortLabel.toLowerCase() +
           " station · " +
-          engineering
+          engineering +
+          rotate
       : this.game.draft.length === 1
-        ? "Place one more station to create a service"
+        ? "Place one more station to create a service" + rotate
         : "Keep drawing · Enter opens infrastructure · fleet is purchased separately";
+  }
+
+  /** "Hold Q/E", using whatever those two actions are actually bound to. */
+  private rotateKeyHint(): string {
+    return (
+      "Hold " +
+      displayInputKey(this.preferences.keybinds.rotateStationLeft) +
+      "/" +
+      displayInputKey(this.preferences.keybinds.rotateStationRight)
+    );
   }
 
   private updateFocusPanel(snap: SimSnapshot): void {

@@ -10,6 +10,7 @@ import {
   SIM_DT,
   SPEED_MULTIPLIERS,
 } from "./constants";
+import { wrapAngle } from "./geo";
 import { facilityBuildCost } from "./mobility";
 import { Simulation, type LinePoint } from "./simulation";
 import type {
@@ -60,6 +61,22 @@ export class Game {
   /** Metres relative to street level for the next segment. */
   buildLevelM = 0;
   buildDirection: ServiceDirection = "bidirectional";
+  /**
+   * Extra platform rotation the player is holding in, radians. It sits on top
+   * of the angle the draft suggests, so drawing a straight line still lays
+   * straight platforms without touching the rotate keys. Cleared once a
+   * station is placed.
+   */
+  stationRotationOffset = 0;
+  /**
+   * Whether the first drafted platform is still following the cursor.
+   *
+   * It has no track to line up with until a second point exists, so it aims
+   * at wherever the line is heading. But a player who turned it by hand
+   * before clicking meant that angle — auto-aiming would silently throw the
+   * choice away on the very next mouse move.
+   */
+  private firstPointAutoAim = true;
   activeFacilityType: FacilityType | null = null;
   lastNotice: string | null = null;
 
@@ -154,6 +171,8 @@ export class Game {
       this.draft = [];
       this.draftRevision++;
       this.blueprinting = false;
+      this.stationRotationOffset = 0;
+      this.firstPointAutoAim = true;
     }
     if (mode === "build" || mode === "place") this.selection = null;
     if (mode !== "place") this.activeFacilityType = null;
@@ -163,7 +182,40 @@ export class Game {
   startBlueprint(): void {
     this.setMode("build");
     this.blueprinting = true;
+    this.stationRotationOffset = 0;
+    this.firstPointAutoAim = true;
     this.lastNotice = null;
+  }
+
+  /** Turn the platform under the cursor. Driven by a held key, so it takes
+   *  an angle per frame rather than a fixed step. */
+  adjustStationRotation(deltaRad: number): void {
+    this.stationRotationOffset = wrapAngle(
+      this.stationRotationOffset + deltaRad,
+    );
+  }
+
+  /**
+   * Aim the only placed station at the cursor.
+   *
+   * The first point of a draft has no track to align to yet, so while it is
+   * still the only point it follows the cursor — a platform left square to
+   * the line it starts is the one thing the player cannot correct later.
+   * Skipped once the platform has been turned by hand: that angle was chosen.
+   *
+   * `draftRevision` must not move here. The estimate is memoized on it and
+   * bumping it every mouse move would reprice the whole draft each frame; it
+   * is safe because a one-point draft has no segment to price.
+   */
+  aimFirstDraftPoint(towards: Vec2): void {
+    if (!this.firstPointAutoAim) return;
+    if (this.draft.length !== 1) return;
+    const first = this.draft[0];
+    if (first.existingStationId !== undefined) return;
+    if (Math.hypot(towards.x - first.pos.x, towards.y - first.pos.y) < 1) return;
+    first.orientationRad = wrapAngle(
+      Math.atan2(towards.y - first.pos.y, towards.x - first.pos.x),
+    );
   }
 
   /** Disarm the map and drop the draft, leaving the panel open to edit. */
@@ -171,6 +223,8 @@ export class Game {
     this.blueprinting = false;
     this.draft = [];
     this.draftRevision++;
+    this.stationRotationOffset = 0;
+    this.firstPointAutoAim = true;
     this.lastNotice = null;
   }
 
@@ -252,6 +306,9 @@ export class Game {
     ) {
       return;
     }
+    // Read before the offset is cleared below: a first platform the player
+    // turned by hand keeps that angle instead of resuming auto-aim.
+    const turnedByHand = this.stationRotationOffset !== 0;
     this.draft.push({
       ...point,
       alignmentFromPrevious:
@@ -267,12 +324,18 @@ export class Game {
             : 0
           : undefined,
     });
+    if (this.draft.length === 1 && turnedByHand) this.firstPointAutoAim = false;
+    // The offset was dialled in for this platform, not for the whole line.
+    this.stationRotationOffset = 0;
     this.draftRevision++;
   }
 
   undoDraftPoint(): void {
     this.lastNotice = null;
     this.draft.pop();
+    // Stepping back to an empty draft starts over, hand-set angle included.
+    if (this.draft.length === 0) this.firstPointAutoAim = true;
+    this.stationRotationOffset = 0;
     this.draftRevision++;
   }
 
@@ -317,6 +380,8 @@ export class Game {
     this.draft = [];
     this.draftRevision++;
     this.blueprinting = false;
+    this.stationRotationOffset = 0;
+    this.firstPointAutoAim = true;
     this.mode = "inspect";
     this.selection = { kind: "line", id: line.id };
     return true;
@@ -355,6 +420,8 @@ export class Game {
     this.draft = [];
     this.draftRevision++;
     this.blueprinting = false;
+    this.stationRotationOffset = 0;
+    this.firstPointAutoAim = true;
     this.mode = "inspect";
     this.activeFacilityType = null;
     this.lastNotice = null;

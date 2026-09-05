@@ -317,9 +317,31 @@
               <div id="keybind-grid"></div>
               <button id="reset-keybinds" class="secondary-btn" type="button">Reset keybinds</button>
             </section>
+            <section>
+              <div class="setting-copy"><strong>Quick tour</strong><small>Replay the short walkthrough of the UI.</small></div>
+              <button id="tutorial-replay" class="secondary-btn" type="button">Replay tour</button>
+            </section>
           </div>
         </form>
       </dialog>
+
+      <div id="tutorial-overlay" class="hidden" role="dialog" aria-live="polite" aria-label="Quick tour">
+        <div id="tutorial-spotlight"></div>
+        <div id="tutorial-tooltip" class="tutorial-tooltip">
+          <div class="tutorial-tooltip-head">
+            <span id="tutorial-step-count" class="eyebrow">1 / 6</span>
+            <button id="tutorial-skip" class="icon-btn" type="button" aria-label="Skip tour">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" /></svg>
+            </button>
+          </div>
+          <h2 id="tutorial-title"></h2>
+          <p id="tutorial-body"></p>
+          <div class="tutorial-tooltip-actions">
+            <button id="tutorial-back" class="secondary-btn" type="button">Back</button>
+            <button id="tutorial-next" class="primary-btn" type="button">Next</button>
+          </div>
+        </div>
+      </div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

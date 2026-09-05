@@ -27,9 +27,19 @@ import type { Layer } from "@deck.gl/core";
 import maplibregl from "maplibre-gl";
 import type { Game } from "./game";
 import {
+  bearingRad,
+  stationCorners,
+  stationHalfLengthM,
+  stationHalfWidthM,
+  stationNodes,
+  wrapAngle,
+} from "./geo";
+import {
+  defaultPlatformLengthM,
   FACILITY_SPECS,
   facilityBuildCost,
   getRollingStockSpec,
+  platformSegmentPath,
 } from "./mobility";
 import type { ThemeMode } from "./preferences";
 import type { LinePoint } from "./simulation";
@@ -253,7 +263,27 @@ const SNAP_RADIUS_PX = 20;
 export interface BuildTarget extends LinePoint {
   snapped: boolean;
   valid: boolean;
+  /** Platform angle to place with, radians. Always resolved. */
+  orientationRad: number;
+  /**
+   * The same angle *before* the player's rotation offset is added.
+   *
+   * The preview re-adds the offset every frame instead of caching the final
+   * angle, because the cursor can sit perfectly still while a rotate key is
+   * held — and the ghost still has to turn.
+   */
+  orientationBaseRad: number;
+  /** True when the angle belongs to something already placed — a built
+   *  platform, or a draft point being closed onto — and the rotate keys must
+   *  leave it alone. */
+  orientationLocked: boolean;
 }
+
+/** What snapping produces before the platform angle is worked out. */
+type UnorientedBuildTarget = Omit<
+  BuildTarget,
+  "orientationRad" | "orientationBaseRad" | "orientationLocked"
+>;
 
 /** Web Mercator ground resolution (metres/pixel) at this latitude/zoom —
  *  used to offset parallel track segments by a constant number of *screen*
@@ -516,6 +546,16 @@ export class MapRenderer {
   /** Whether hoverLngLat latched onto a station/draft point rather than
    *  free space — drawn as a ring so the snap is visible before clicking. */
   hoverSnapped = false;
+  /**
+   * Angle of the platform ghost under the cursor *before* the rotation
+   * offset, radians. The offset is applied at draw time rather than stored
+   * here, so holding a rotate key turns the ghost even though no mousemove
+   * fires to refresh this.
+   */
+  hoverBaseOrientationRad = 0;
+  /** True when the hovered target's angle is fixed by what it snapped to,
+   *  and the rotate keys do not apply. */
+  hoverOrientationLocked = false;
   /** Station under the cursor, if any. Its waiting count is shown on demand
    *  rather than labelling every busy station at once, which buried the map
    *  in numbers as soon as the network got going. */
@@ -1707,6 +1747,40 @@ export class MapRenderer {
   }
 
   /** Hit-test a station near a screen point (radius in px). */
+  /**
+   * Screen-pixel distance from a point to a platform, measured to the whole
+   * rectangle rather than to its centre.
+   *
+   * A metro platform is 180 m of ground. Zoomed in, its ends sit far outside
+   * any sensible centre-based radius, so pointing straight at the station you
+   * can see used to snap to nothing at all. Zoomed out the rectangle collapses
+   * to under a pixel and this degrades to the old centre test on its own.
+   */
+  private platformScreenDistance(
+    pos: Vec2,
+    orientationRad: number,
+    halfLengthM: number,
+    screen: Vec2,
+  ): number {
+    const [endA, endB] = stationNodes(pos, orientationRad, halfLengthM);
+    const a = this.map.project(this.toLngLat(endA));
+    const b = this.map.project(this.toLngLat(endB));
+    const abx = b.x - a.x;
+    const aby = b.y - a.y;
+    const lenSq = abx * abx + aby * aby;
+    const t =
+      lenSq === 0
+        ? 0
+        : Math.max(
+            0,
+            Math.min(
+              1,
+              ((screen.x - a.x) * abx + (screen.y - a.y) * aby) / lenSq,
+            ),
+          );
+    return Math.hypot(screen.x - (a.x + abx * t), screen.y - (a.y + aby * t));
+  }
+
   pickStation(
     snap: SimSnapshot,
     screen: Vec2,
@@ -1715,8 +1789,12 @@ export class MapRenderer {
     let best: Station | null = null;
     let bestD = radius;
     for (const s of snap.stations.values()) {
-      const sp = this.map.project(this.toLngLat(s.pos));
-      const d = Math.hypot(sp.x - screen.x, sp.y - screen.y);
+      const d = this.platformScreenDistance(
+        s.pos,
+        s.orientationRad,
+        stationHalfLengthM(s.platformLengthM),
+        screen,
+      );
       if (d < bestD) {
         bestD = d;
         best = s;
@@ -1760,7 +1838,72 @@ export class MapRenderer {
     lngLat: [number, number],
     transitMode: TransitMode,
     resolveRoadPath = false,
+    rotationOffsetRad = 0,
   ): BuildTarget {
+    const target = this.resolveBuildTarget(
+      snap,
+      draft,
+      screen,
+      lngLat,
+      transitMode,
+      resolveRoadPath,
+    );
+    const angle = this.resolveStationAngle(snap, draft, target);
+    return {
+      ...target,
+      orientationRad: angle.locked
+        ? angle.baseRad
+        : wrapAngle(angle.baseRad + rotationOffsetRad),
+      orientationBaseRad: angle.baseRad,
+      orientationLocked: angle.locked,
+    };
+  }
+
+  /**
+   * The angle to lay the platform at.
+   *
+   * A built station keeps the platform it has — rotating one already in the
+   * ground is not a thing the player can do. Everything else lines up with
+   * the track arriving from the last drafted point, and the held rotate keys
+   * turn it from there.
+   */
+  private resolveStationAngle(
+    snap: SimSnapshot,
+    draft: LinePoint[],
+    target: UnorientedBuildTarget,
+  ): { baseRad: number; locked: boolean } {
+    if (target.existingStationId !== undefined) {
+      const station = snap.stations.get(target.existingStationId);
+      if (station) return { baseRad: station.orientationRad, locked: true };
+    }
+    // Snapping back onto a point of this same draft — closing a loop — keeps
+    // that point's angle rather than laying a second platform across it.
+    for (const point of draft) {
+      if (
+        point.orientationRad !== undefined &&
+        Math.hypot(point.pos.x - target.pos.x, point.pos.y - target.pos.y) < 1
+      ) {
+        return { baseRad: point.orientationRad, locked: true };
+      }
+    }
+    const previous = draft[draft.length - 1];
+    const baseRad =
+      previous &&
+      Math.hypot(previous.pos.x - target.pos.x, previous.pos.y - target.pos.y) >
+        1
+        ? bearingRad(previous.pos, target.pos)
+        : (previous?.orientationRad ?? 0);
+    return { baseRad, locked: false };
+  }
+
+  private resolveBuildTarget(
+    snap: SimSnapshot,
+    draft: LinePoint[],
+    screen: Vec2,
+    lngLat: [number, number],
+    transitMode: TransitMode,
+    resolveRoadPath: boolean,
+  ): UnorientedBuildTarget {
     if (transitMode === "bus") {
       const cursorWorld = this.toWorld(lngLat[1], lngLat[0]);
 
@@ -1840,38 +1983,69 @@ export class MapRenderer {
       };
     }
 
-    const station = this.pickStation(snap, screen, SNAP_RADIUS_PX);
-    let target: BuildTarget;
-    if (station) {
+    // Built stations and draft points compete on distance rather than in
+    // priority order. A built station used to win anywhere inside the whole
+    // snap radius, so trying to close a loop onto the draft point directly
+    // under the cursor could jump the click twenty pixels away to a station
+    // the player was not pointing at.
+    //
+    // Draft points are platforms too, and the one being closed onto is
+    // usually the first — drawn at full size — so both are measured to their
+    // rectangle, not to their centre.
+    const draftHalfLengthM = stationHalfLengthM(
+      defaultPlatformLengthM(transitMode),
+    );
+    let bestD = SNAP_RADIUS_PX;
+    let bestStation: Station | null = null;
+    let bestDraft: LinePoint | null = null;
+    for (const candidate of snap.stations.values()) {
+      const d = this.platformScreenDistance(
+        candidate.pos,
+        candidate.orientationRad,
+        stationHalfLengthM(candidate.platformLengthM),
+        screen,
+      );
+      if (d < bestD) {
+        bestD = d;
+        bestStation = candidate;
+      }
+    }
+    for (const candidate of draft) {
+      const d = this.platformScreenDistance(
+        candidate.pos,
+        candidate.orientationRad ?? 0,
+        draftHalfLengthM,
+        screen,
+      );
+      // Strictly closer, so a built station keeps an exact tie: joining the
+      // network is almost always what was meant.
+      if (d < bestD) {
+        bestD = d;
+        bestStation = null;
+        bestDraft = candidate;
+      }
+    }
+    let target: UnorientedBuildTarget;
+    if (bestStation) {
       target = {
-        pos: station.pos,
-        existingStationId: station.id,
+        pos: bestStation.pos,
+        existingStationId: bestStation.id,
+        snapped: true,
+        valid: true,
+      };
+    } else if (bestDraft) {
+      target = {
+        pos: { ...bestDraft.pos },
+        existingStationId: bestDraft.existingStationId,
         snapped: true,
         valid: true,
       };
     } else {
-      let best: LinePoint | null = null;
-      let bestD = SNAP_RADIUS_PX;
-      for (const p of draft) {
-        const sp = this.map.project(this.toLngLat(p.pos));
-        const d = Math.hypot(sp.x - screen.x, sp.y - screen.y);
-        if (d < bestD) {
-          bestD = d;
-          best = p;
-        }
-      }
-      target = best
-        ? {
-            pos: { ...best.pos },
-            existingStationId: best.existingStationId,
-            snapped: true,
-            valid: true,
-          }
-        : {
-            pos: this.toWorld(lngLat[1], lngLat[0]),
-            snapped: false,
-            valid: true,
-          };
+      target = {
+        pos: this.toWorld(lngLat[1], lngLat[0]),
+        snapped: false,
+        valid: true,
+      };
     }
     if (draft.length > 0) {
       const conflicts = this.findBuildingConflicts(
@@ -1940,7 +2114,7 @@ export class MapRenderer {
     layers.push(...this.buildVehicleLayers(snap, game.tickAlpha));
     layers.push(...network.stations);
     layers.push(...this.getMobilityLayers(snap, game));
-    layers.push(...this.buildDraftLayers(game));
+    layers.push(...this.buildDraftLayers(snap, game));
     layers.push(...this.buildFacilityPreviewLayers(game));
     layers.push(this.buildWaitingLayer(snap));
     this.overlay.setProps({ layers });
@@ -2258,48 +2432,20 @@ export class MapRenderer {
       const firstLine = station.lineIds
         .map((lineId) => snap.lines.get(lineId))
         .find((line) => line !== undefined);
-      let tangent = { x: 1, y: 0 };
-      if (firstLine) {
-        const index = firstLine.stationIds.indexOf(station.id);
-        const neighborId =
-          index < firstLine.stationIds.length - 1
-            ? firstLine.stationIds[index + 1]
-            : firstLine.stationIds[Math.max(0, index - 1)];
-        const neighbor = snap.stations.get(neighborId);
-        if (neighbor) {
-          const dx = neighbor.pos.x - station.pos.x;
-          const dy = neighbor.pos.y - station.pos.y;
-          const length = Math.hypot(dx, dy) || 1;
-          tangent = { x: dx / length, y: dy / length };
-        }
-      }
-      const perpendicular = { x: -tangent.y, y: tangent.x };
-      const halfLength = Math.max(16, station.platformLengthM / 2);
-      const halfWidth = firstLine?.mode === "bus" ? 4 : 8;
       const z =
         station.primaryAlignment === "elevated"
           ? station.levelM
           : station.primaryAlignment === "underground"
             ? 0.65
             : 0.35;
-      const corners: Vec2[] = [
-        {
-          x: station.pos.x - tangent.x * halfLength - perpendicular.x * halfWidth,
-          y: station.pos.y - tangent.y * halfLength - perpendicular.y * halfWidth,
-        },
-        {
-          x: station.pos.x + tangent.x * halfLength - perpendicular.x * halfWidth,
-          y: station.pos.y + tangent.y * halfLength - perpendicular.y * halfWidth,
-        },
-        {
-          x: station.pos.x + tangent.x * halfLength + perpendicular.x * halfWidth,
-          y: station.pos.y + tangent.y * halfLength + perpendicular.y * halfWidth,
-        },
-        {
-          x: station.pos.x - tangent.x * halfLength + perpendicular.x * halfWidth,
-          y: station.pos.y - tangent.y * halfLength + perpendicular.y * halfWidth,
-        },
-      ];
+      // The angle is the one the player placed it at, not a guess from the
+      // first line to serve it.
+      const corners = stationCorners(
+        station.pos,
+        station.orientationRad,
+        stationHalfLengthM(station.platformLengthM),
+        stationHalfWidthM(firstLine?.mode ?? "metro"),
+      );
       const color = firstLine
         ? hexToRgb(firstLine.color)
         : ([105, 126, 134, 230] as RGBA);
@@ -2556,7 +2702,7 @@ export class MapRenderer {
     ];
   }
 
-  private buildDraftLayers(game: Game): Layer[] {
+  private buildDraftLayers(snap: SimSnapshot, game: Game): Layer[] {
     if (!game.blueprinting) return [];
     const draftColorFor = (alignment: RailAlignment): RGBA =>
       game.buildTransitMode === "bus"
@@ -2569,81 +2715,213 @@ export class MapRenderer {
               ? [255, 184, 94, 235]
             : [242, 248, 248, 215];
     const activeDraftColor = draftColorFor(game.buildAlignment);
-    // The snap ring shows before the first point is placed too, so the player
-    // can see they are about to branch off an existing station.
-    const snapRing = this.hoverSnapped && this.hoverLngLat
-      ? [
-          new ScatterplotLayer({
-            id: "snap-target",
-            data: [this.hoverLngLat],
-            getPosition: (p: [number, number]) => p,
-            getRadius: 11,
-            radiusUnits: "pixels",
-            filled: false,
-            stroked: true,
-            getLineColor: activeDraftColor,
-            getLineWidth: 2,
-            lineWidthUnits: "pixels",
-            pickable: false,
-          }),
-        ]
-      : [];
-    if (game.draft.length === 0) return snapRing;
 
-    const pts = game.draft.map((p) => this.toLngLat(p.pos));
+    // A station is a platform on the ground, so the draft shows the real
+    // rectangle rather than a dot: what will be built, at the size and angle
+    // it will be built at.
+    const draftHalfLengthM = stationHalfLengthM(
+      defaultPlatformLengthM(game.buildTransitMode),
+    );
+    const halfWidthM = stationHalfWidthM(game.buildTransitMode);
+    // An existing station keeps the platform it was built with, which may be
+    // a different length from what is being drawn now.
+    const halfLengthFor = (point: LinePoint): number => {
+      const station =
+        point.existingStationId !== undefined
+          ? snap.stations.get(point.existingStationId)
+          : undefined;
+      return station
+        ? stationHalfLengthM(station.platformLengthM)
+        : draftHalfLengthM;
+    };
+    const nodesOf = (point: LinePoint): [Vec2, Vec2] =>
+      stationNodes(
+        point.pos,
+        point.orientationRad ?? 0,
+        halfLengthFor(point),
+      );
+
+    const hoverWorld = this.hoverLngLat
+      ? this.toWorld(this.hoverLngLat[1], this.hoverLngLat[0])
+      : null;
+    // Resolved here, every frame, instead of being read back from a value
+    // cached on the last mousemove. Holding a rotate key has to turn the
+    // ghost while the cursor stands perfectly still, and a still cursor
+    // fires no mousemove at all.
+    const ghostOrientationRad = this.hoverOrientationLocked
+      ? this.hoverBaseOrientationRad
+      : wrapAngle(this.hoverBaseOrientationRad + game.stationRotationOffset);
+    const ghost: LinePoint | null = hoverWorld
+      ? {
+          pos: hoverWorld,
+          orientationRad: ghostOrientationRad,
+          // Carried so the ghost is sized by the platform it has latched
+          // onto, which may be longer or shorter than what is being drawn.
+          existingStationId: this.hoveredStationId ?? undefined,
+        }
+      : null;
+
+    interface DraftPlatform {
+      polygon: [number, number][];
+      /**
+       * `ghost` is the platform under the cursor, `placed` one already
+       * clicked, and `snap` the outline of something the cursor has latched
+       * onto — highlighting the whole rectangle you are about to join, which
+       * a small ring on its centre never made obvious.
+       */
+      kind: "ghost" | "placed" | "snap";
+    }
+    const platforms: DraftPlatform[] = [];
+    const nodeMarkers: [number, number][] = [];
+    const addPlatform = (
+      point: LinePoint,
+      kind: DraftPlatform["kind"],
+    ): void => {
+      // A placed point that latched onto a built station is already drawn by
+      // the network layers; a second rectangle on top only reads as a smear.
+      // The snap outline is deliberately exempt — that one *is* the highlight.
+      if (kind !== "placed" || point.existingStationId === undefined) {
+        platforms.push({
+          polygon: stationCorners(
+            point.pos,
+            point.orientationRad ?? 0,
+            halfLengthFor(point),
+            halfWidthM,
+          ).map((corner) => this.toLngLat(corner)),
+          kind,
+        });
+      }
+      for (const node of nodesOf(point)) nodeMarkers.push(this.toLngLat(node));
+    };
+    for (const point of game.draft) addPlatform(point, "placed");
+    if (ghost) addPlatform(ghost, this.hoverSnapped ? "snap" : "ghost");
+
+    // Same path the commit will price and build, so the preview cannot
+    // promise a route the line does not take.
+    const pathBetween = (from: LinePoint, to: LinePoint): [number, number][] =>
+      (to.pathFromPrevious && to.pathFromPrevious.length >= 2
+        ? to.pathFromPrevious
+        : platformSegmentPath(from.pos, nodesOf(from), to.pos, nodesOf(to))
+      ).map((point) => this.toLngLat(point));
+
     const draftSegments: Array<{
       path: [number, number][];
       color: RGBA;
     }> = [];
     for (let i = 1; i < game.draft.length; i++) {
       draftSegments.push({
-        path: (game.draft[i].pathFromPrevious ?? [
-          game.draft[i - 1].pos,
-          game.draft[i].pos,
-        ]).map((point) => this.toLngLat(point)),
+        path: pathBetween(game.draft[i - 1], game.draft[i]),
         color: draftColorFor(
           game.draft[i].alignmentFromPrevious ?? "surface",
         ),
       });
     }
-    if (this.hoverLngLat) {
+    const last = game.draft[game.draft.length - 1];
+    if (ghost && last) {
       draftSegments.push({
-        path: [pts[pts.length - 1], this.hoverLngLat],
+        path: pathBetween(last, ghost),
         color: activeDraftColor,
       });
     }
-    return [
-      ...snapRing,
-      new PathLayer({
-        id: "draft-line",
-        data: draftSegments,
-        getPath: (segment) => segment.path,
-        getColor: (segment) => segment.color,
-        getWidth:
-          game.buildTransitMode === "bus"
-            ? 2.5
-            : game.buildTransitMode === "regional-rail"
-              ? 4.5
-              : 3.5,
-        widthUnits: "pixels",
-        capRounded: true,
-        jointRounded: true,
-        pickable: false,
-      }),
-      new ScatterplotLayer({
-        id: "draft-points",
-        data: pts,
-        getPosition: (p: [number, number]) => p,
-        getRadius: 5,
-        radiusUnits: "pixels",
-        getFillColor: activeDraftColor,
-        stroked: true,
-        getLineColor: STATION_RING,
-        getLineWidth: 1.5,
-        lineWidthUnits: "pixels",
-        pickable: false,
-      }),
+
+    const platformFill: RGBA = [
+      activeDraftColor[0],
+      activeDraftColor[1],
+      activeDraftColor[2],
+      50,
     ];
+    const layers: Layer[] = [];
+    // The snap ring shows before the first point is placed too, so the player
+    // can see they are about to branch off an existing station.
+    if (this.hoverSnapped && this.hoverLngLat) {
+      layers.push(
+        new ScatterplotLayer({
+          id: "snap-target",
+          data: [this.hoverLngLat],
+          getPosition: (p: [number, number]) => p,
+          getRadius: 11,
+          radiusUnits: "pixels",
+          filled: false,
+          stroked: true,
+          getLineColor: activeDraftColor,
+          getLineWidth: 2,
+          lineWidthUnits: "pixels",
+          pickable: false,
+        }),
+      );
+    }
+    if (platforms.length > 0) {
+      layers.push(
+        new PolygonLayer<DraftPlatform>({
+          id: "draft-station-models",
+          data: platforms,
+          getPolygon: (platform) => platform.polygon,
+          filled: true,
+          stroked: true,
+          extruded: false,
+          getFillColor: (platform) =>
+            platform.kind === "ghost"
+              ? platformFill
+              : platform.kind === "snap"
+                ? ([0, 0, 0, 0] as RGBA)
+                : ([
+                    platformFill[0],
+                    platformFill[1],
+                    platformFill[2],
+                    28,
+                  ] as RGBA),
+          getLineColor: activeDraftColor,
+          getLineWidth: (platform) =>
+            platform.kind === "ghost"
+              ? 2
+              : platform.kind === "snap"
+                ? 2.5
+                : 1.25,
+          lineWidthUnits: "pixels",
+          pickable: false,
+        }),
+      );
+    }
+    if (draftSegments.length > 0) {
+      layers.push(
+        new PathLayer({
+          id: "draft-line",
+          data: draftSegments,
+          getPath: (segment) => segment.path,
+          getColor: (segment) => segment.color,
+          getWidth:
+            game.buildTransitMode === "bus"
+              ? 2.5
+              : game.buildTransitMode === "regional-rail"
+                ? 4.5
+                : 3.5,
+          widthUnits: "pixels",
+          capRounded: true,
+          jointRounded: true,
+          pickable: false,
+        }),
+      );
+    }
+    if (nodeMarkers.length > 0) {
+      // The ends are where track attaches, so they are worth seeing while
+      // rotating: they are what the next segment will aim at.
+      layers.push(
+        new ScatterplotLayer({
+          id: "draft-station-nodes",
+          data: nodeMarkers,
+          getPosition: (p: [number, number]) => p,
+          getRadius: 3,
+          radiusUnits: "pixels",
+          getFillColor: activeDraftColor,
+          stroked: true,
+          getLineColor: STATION_RING,
+          getLineWidth: 1,
+          lineWidthUnits: "pixels",
+          pickable: false,
+        }),
+      );
+    }
+    return layers;
   }
 
   /**
