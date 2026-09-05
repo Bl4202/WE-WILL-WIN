@@ -682,9 +682,22 @@ export class Simulation {
     }
     if (dead.size === 0) return;
 
-    const boardsDeadLine = (passenger: Passenger): boolean => {
-      const leg = passenger.legs[passenger.legIndex];
-      return leg !== undefined && dead.has(leg.lineId);
+    /**
+     * Whether any leg still ahead of this passenger rides a dead line.
+     *
+     * Every remaining leg, not just the current one. Checking only
+     * `legs[legIndex]` rescued the people waiting to board the withdrawn line
+     * and quietly abandoned everyone whose *second* leg used it: they ride
+     * their first leg normally, alight, join a platform queue for a service
+     * that will never come, and stay there. Reproduced on a two-line network
+     * sharing one interchange — 67 passengers still frozen at that station
+     * 5.6 sim-hours after the withdrawal, none of them counted anywhere.
+     */
+    const ridesDeadLine = (passenger: Passenger): boolean => {
+      for (let i = passenger.legIndex; i < passenger.legs.length; i++) {
+        if (dead.has(passenger.legs[i].lineId)) return true;
+      }
+      return false;
     };
 
     /** Re-plan from `fromStationId`; false if the network cannot serve them. */
@@ -709,7 +722,7 @@ export class Simulation {
       for (const pid of station.waiting) {
         const passenger = this.passengers.get(pid);
         if (!passenger) continue;
-        if (!boardsDeadLine(passenger)) {
+        if (!ridesDeadLine(passenger)) {
           keep.push(pid);
           continue;
         }
@@ -727,7 +740,7 @@ export class Simulation {
     for (const pid of this.walking) {
       const passenger = this.passengers.get(pid);
       if (!passenger) continue;
-      if (!boardsDeadLine(passenger)) {
+      if (!ridesDeadLine(passenger)) {
         stillWalking.push(pid);
         continue;
       }

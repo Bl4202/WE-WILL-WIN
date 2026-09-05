@@ -155,22 +155,39 @@ section("determinism");
 
 section("trip conservation");
 {
+  // Two lines meeting at one interchange, so the demand model actually
+  // produces transfer journeys. A single line only ever yields one-leg trips,
+  // which is how the first version of this check passed while passengers
+  // whose *second* leg used the withdrawn line were being abandoned.
   const sim = newSim();
   fund(sim);
-  const l = line(sim, 8);
+  const a = line(sim, 8);
   fund(sim);
-  const v = sim.purchaseVehicle("metro-nova-m7");
-  if (v && l) sim.assignVehicle(v.id, l.id);
+  const shared = a!.stationIds[4];
+  const points: LinePoint[] = [{ pos: byPop[4].center, existingStationId: shared }];
+  for (let i = 0; i < 7; i++) points.push({ pos: byPop[20 + i].center });
+  const b = sim.commitLine(points, "metro", "surface");
   fund(sim);
+
+  const vehicles: number[] = [];
+  for (const target of [a, b]) {
+    const v = sim.purchaseVehicle("metro-nova-m7");
+    if (v && target) {
+      sim.assignVehicle(v.id, target.id);
+      vehicles.push(v.id);
+    }
+    fund(sim);
+  }
 
   run(sim, 60_000);
   const before = sim.snapshot().passengers.size;
 
-  // Pull the only vehicle. Every passenger who was relying on that line has
-  // to end up somewhere accountable: re-planned onto another line, or
-  // retired as unserved. Nobody may simply stay queued forever for a service
-  // that no longer runs.
-  if (v) sim.unassignVehicle(v.id);
+  // Pull the second line's only vehicle. Every passenger relying on it has to
+  // end up somewhere accountable: re-planned onto another line, or retired as
+  // unserved. Nobody may stay queued forever for a service that no longer
+  // runs — including someone still riding their first leg who was going to
+  // change onto it later.
+  sim.unassignVehicle(vehicles[1]);
   run(sim, 40_000);
 
   const snap = sim.snapshot();
@@ -178,11 +195,26 @@ section("trip conservation");
     snap.vehicles.filter((veh) => veh.lineId !== null).map((veh) => veh.lineId),
   );
   let strandedWaiting = 0;
+  let holdingDeadLeg = 0;
+  for (const passenger of snap.passengers.values()) {
+    // Any leg still ahead of them, not just the one they are on.
+    for (let i = passenger.legIndex; i < passenger.legs.length; i++) {
+      if (!servedLines.has(passenger.legs[i].lineId)) {
+        holdingDeadLeg++;
+        break;
+      }
+    }
+  }
   for (const station of snap.stations.values()) {
     for (const pid of station.waiting) {
       const p = snap.passengers.get(pid);
-      const leg = p?.legs[p.legIndex];
-      if (leg && !servedLines.has(leg.lineId)) strandedWaiting++;
+      if (!p) continue;
+      for (let i = p.legIndex; i < p.legs.length; i++) {
+        if (!servedLines.has(p.legs[i].lineId)) {
+          strandedWaiting++;
+          break;
+        }
+      }
     }
   }
 
@@ -190,6 +222,11 @@ section("trip conservation");
     "no passenger waits for a line with no vehicle",
     strandedWaiting === 0,
     `${strandedWaiting} stranded (had ${before} active before the unassign)`,
+  );
+  check(
+    "no passenger holds a later leg on a withdrawn line",
+    holdingDeadLeg === 0,
+    `${holdingDeadLeg} still routed through a line with no service`,
   );
 
   // Every avoided car trip is a journey that was successfully planned, so it
