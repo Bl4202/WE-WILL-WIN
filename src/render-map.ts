@@ -599,6 +599,13 @@ export class MapRenderer {
   private roadStripeStyleKey = "";
   private roadLayersVisible: boolean | null = null;
   private geometryViewportKey = "";
+  /**
+   * Wall-clock guard for the callers that ask for an extraction outside the
+   * `idle` listener. Those run per mousemove, and on a cold tile cache the
+   * cache they are checking stays empty for seconds at a time, so without a
+   * floor between attempts every mouse movement pays for a full re-scan.
+   */
+  private lastForcedGeometryMs = 0;
   private demolitionFilterKey = "";
   /** networkVersion the demolition filter was last computed for; the set
    *  only changes when the network does. */
@@ -651,6 +658,14 @@ export class MapRenderer {
       this.declutterRoadLabels();
     });
     this.map.on("idle", this.refreshWorldGeometry);
+    // New tiles mean the previous extraction's answer is stale, including the
+    // empty answer it gets while a cold viewport is still streaming in. `idle`
+    // then re-extracts exactly once, after the tiles have settled.
+    this.map.on("sourcedata", (e) => {
+      if (e.sourceId === BUILDINGS_SOURCE_ID && e.tile) {
+        this.geometryViewportKey = "";
+      }
+    });
   }
 
   setTheme(theme: ThemeMode): void {
@@ -1270,6 +1285,19 @@ export class MapRenderer {
       }
     }
 
+    // Latched whether or not anything was found. The extraction genuinely ran
+    // for this camera, and re-running it against the same tiles produces the
+    // same empty answer — the `sourcedata` listener in the constructor clears
+    // this again as soon as new tiles actually arrive. Latching only on a
+    // non-empty result meant that on a cold tile cache (a fresh visit to the
+    // deployed site, where the browser's cache is partitioned per site and
+    // shares nothing with localhost) the key never took, so every subsequent
+    // `idle` — and every mousemove through the fallbacks below — re-ran two
+    // full `querySourceFeatures` sweeps. Locally the tiles are already warm,
+    // the first sweep finds roads, and the guard latches immediately, which
+    // is why this only ever showed up in the deployed build.
+    this.geometryViewportKey = viewportKey;
+
     if (models.length > 0) {
       this.roadModels = models;
       this.roadNodes = nodes;
@@ -1277,11 +1305,23 @@ export class MapRenderer {
       // detailed footprint cache when switching from 3D to 2D so clearance
       // checks remain tied to real buildings instead of losing that data.
       if (footprints.length > 0) this.buildingFootprints = footprints;
-      this.geometryViewportKey = viewportKey;
       this.roadGeometryRevision++;
       this.pushRoadStructureData();
     }
   };
+
+  /**
+   * Ask for an extraction from a hot path (a mousemove) rather than from
+   * `idle`. Rate-limited: the caller cannot tell whether the last attempt
+   * found anything, so an unthrottled call re-scans on every mouse event for
+   * as long as the tiles are unhelpful.
+   */
+  private requestWorldGeometry(): void {
+    const now = performance.now();
+    if (now - this.lastForcedGeometryMs < 500) return;
+    this.lastForcedGeometryMs = now;
+    this.refreshWorldGeometry();
+  }
 
   /**
    * Invisible extruded copies of the basemap's buildings, drawn immediately
@@ -1654,7 +1694,7 @@ export class MapRenderer {
     // planning zoom, so each mouse movement paid for a full 75-300 ms
     // re-extraction that left the array empty and did it all again.
     if (this.buildingFootprints.length === 0) {
-      this.refreshWorldGeometry();
+      this.requestWorldGeometry();
     }
     if (this.buildingFootprints.length === 0) return null;
     const a = this.toLngLat(start);
@@ -1949,7 +1989,7 @@ export class MapRenderer {
         };
       }
 
-      if (this.roadModels.length === 0) this.refreshWorldGeometry();
+      if (this.roadModels.length === 0) this.requestWorldGeometry();
       const roadTarget = this.nearestRoadSnap(screen, 28);
       if (!roadTarget) {
         return { pos: cursorWorld, snapped: false, valid: false };
